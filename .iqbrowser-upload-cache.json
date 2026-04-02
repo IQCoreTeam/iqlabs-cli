@@ -1,0 +1,59 @@
+{
+  "solchat-root/solchat-root": {
+    "version": "1.0.0",
+    "files": {
+      ".idea/.gitignore": {
+        "txId": "42dhsCzfwiFzzH1Qk7r2Mune7QxQVxjVZhpbAnzjm7p6ZbvPzr2dgFZjDJTXAhxq9xmT3AQWEtNFdDAwzvURuL1b",
+        "hash": "40eb99ef599d8366a48f3c2a07065028340a74a0efb2224467407e6c3a4d993e"
+      },
+      ".idea/modules.xml": {
+        "txId": "Nyv1BP219Puhad7Xab3mVbCrknjEicA1AU8fSVKw48sJabjGdZYRfCxsUP3Eeb69nGhV17PX2eSFkXTiifDhX2H",
+        "hash": "cef210551dfe601164c5ce00166f003c20efd4ec5244297ffb32e98c6064a5f8"
+      },
+      ".idea/simplechatcli.iml": {
+        "txId": "43Qcmu1Ugcx53u2dtN6KLmiMnaDiAusTikAeZe4bjnBubWNsG3ur8ZZorwqD54dWqQXS5s1aVxTjx5BDtuxkfSJb",
+        "hash": "38bf38208bbd3643033e74e76e9cdf7fe983517d02409fd9f5537da068906e11"
+      },
+      ".idea/workspace.xml": {
+        "txId": "5e1onLDpLiF8wHkdqg5EnZyYoNvCgwa3273dXupMGV2VFn6V7kFCBhpdu7NgsnFapF6DYuYsXVAaqRmKrYEadtbU",
+        "hash": "b486b9a9c866789532ad1d72c77261e11739f779f1f87f6339a6f5710d26ef09"
+      },
+      "iqbrowser.json": {
+        "txId": "5N3PiJKvm9YgcQCi9DhRmLzk3ec1UwJKi4j7u2LgNh63KyrRRdSbGRwHkQr2fyy3xuHxS2P4hVsVfSPBfipVp9vn",
+        "hash": "1cc2fd23fd7f33f59246d0a1c4004131b3f350fa2d970b6a3bfaa645702c1638"
+      },
+      "package.json": {
+        "txId": "66vTJBD8rCJA5Vifg5akb2fPSsUfoSCueEBxfRJmtiddvjuav86zJKAvmA3nfggqXRECErwjfzyiSHnez8tRC429",
+        "hash": "3c9bd65da641750d72444d7b619603f0584cba57af00a2456ba40c41fdc7f1b1"
+      },
+      "src/app.ts": {
+        "txId": "6aTgWhoe1HTea4pwwAkAVyW8wxPgXU9djD8ec52EzRVULiermbffHixAmYM9yozoGmuyFwnjkkyXBb4au9CnsX2",
+        "hash": "898de7632af42d33ddf660cc85deb4251950c13c8824791f2d3a4474abb34338"
+      },
+      "src/apps/chat/chat-service.ts": {
+        "txId": "4QtS3ZVrzY9KLN8ztT5yRCHxuqyincMYiig3j4rxgJe3jyeZ5rXqUEDcM8x5ZZu55iNgSv1PZHKMkwUU8gm6yegv",
+        "hash": "c0387eed0c53b2d00c78edab19969216aed284f3b479958fc194f470a65558b0"
+      },
+      "src/ui/menus/chat.ts": {
+        "txId": "2Evv7a2yUD6iHkp4qaDRusqHm4Uoq3FwzmapmFy6V5UYf3imDzkBNAD5rmmyDapnthuViUKsoDT7SFVnNVPgAKQt",
+        "hash": "7808bc91a682e187a5279a93debb082560a1d8657bc40dc8dff23b23d2e22f66"
+      },
+      "src/utils/logger.ts": {
+        "txId": "2ykTPmFsAH7uB2qoURkmpgBBRatSc3yRirQhfwAZLCxWMreaFWjP5RZyPJDPaa9mcZsJFyXKUXhmB3wS51T1H1L2",
+        "hash": "32803703462584be4fdb1affeafce932a06c4ce3602e523f70dad6e1b482ff30"
+      },
+      "src/utils/prompt.ts": {
+        "txId": "rKEmomqBSBKQ792sZe5BzJtidXzVc2sgnUP943BuyqX6ySQj3i155aJ6eDJ3A7B7Dye54eWCqwbg43LeUzQKRxR",
+        "hash": "8884301d1c470dd179265d92f12a2e6a269c7656070c63b1fa57adb746dc7bb2"
+      },
+      "src/utils/wallet_manager.ts": {
+        "txId": "2rRVjP2iyiLWQ4xjhrgQoTSxedZm1CaZ6V1f9ooE1LKbLCoyGmXupyByF4L3wPwSZW9Xqq7VwoVEqeGKZygwiyEM",
+        "hash": "94e97b8e1e4fbe64d300463c053a387444c37e845086bda895cc1f93043acddd"
+      },
+      "tsconfig.json": {
+        "txId": "2rT51BCHd4yuXyjCnogRXVZSM6Xgiqum2Tj1NkDyHLVTNPCNo4n5CrJQqexh41p8RejHHbZFvtJn1tCJ13iZBcLZ",
+        "hash": "5901b5340dbba25d260e60e6e8d582a4a83cd74d243a1b375de2f998b6dbf3c1"
+      }
+    }
+  }
+}

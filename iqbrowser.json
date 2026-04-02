@@ -1,0 +1,9 @@
+{
+  "name": "solchat-root",
+  "version": "1.0.0",
+  "description": "solchat for cli, dont turn on the web version this will not work!!",
+  "root": "solchat-root",
+  "runtime": "node",
+  "install": "npm install",
+  "start": "npm run dev"
+}
