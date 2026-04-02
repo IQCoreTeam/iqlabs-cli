@@ -1,3 +1,5 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import iqlabs from "@iqlabs-official/solana-sdk";
 
 import {ChatService} from "../../apps/chat/chat-service";
@@ -19,13 +21,33 @@ const showMenu = () => {
     console.log("\n============================\n");
 };
 
+const ENV_PATH = path.join(process.cwd(), ".env");
+
+const saveRpcToEnv = (url: string) => {
+    let content = "";
+    if (fs.existsSync(ENV_PATH)) {
+        content = fs.readFileSync(ENV_PATH, "utf8");
+    }
+    const key = "SOLANA_RPC_ENDPOINT";
+    const line = `${key}=${url}`;
+    if (content.includes(key)) {
+        content = content.replace(new RegExp(`^${key}=.*$`, "m"), line);
+    } else {
+        content = content.trimEnd() + (content ? "\n" : "") + line + "\n";
+    }
+    fs.writeFileSync(ENV_PATH, content, "utf8");
+};
+
 const rpcSettings = async () => {
     const current = iqlabs.getRpcUrl();
     logInfo(`Current RPC: ${current}`);
-    const newUrl = (await prompt("New RPC URL (empty to keep): ")).trim();
+    console.log("");
+    console.log("Paste your RPC endpoint URL below (empty to keep current):");
+    const newUrl = (await prompt("> ")).trim();
     if (newUrl) {
         iqlabs.setRpcUrl(newUrl);
-        logInfo(`RPC updated to: ${newUrl}`);
+        saveRpcToEnv(newUrl);
+        logInfo(`RPC updated and saved: ${newUrl}`);
     }
     await prompt("Press Enter to continue...");
 };

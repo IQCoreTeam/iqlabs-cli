@@ -1,13 +1,22 @@
+import {getWalletCtx, getKeypairInfo} from "../../utils/wallet_manager";
 import {logError} from "../../utils/logger";
 import {prompt} from "../../utils/prompt";
+import {shortenSig} from "../../utils/format";
 import {runChatCommand} from "./chat";
 import {runMyMenu} from "./my-menu";
 import {runIqchanMenu} from "./iqchan";
 
 const showMainMenu = () => {
+    const {signer} = getWalletCtx();
+    const pubkey = signer.publicKey.toBase58();
+    const {path: kpPath} = getKeypairInfo();
+
     console.log("\n============================");
     console.log("   Solana Internet CLI      ");
     console.log("============================\n");
+    console.log(`  Wallet: ${shortenSig(pubkey, 6)}`);
+    console.log(`  Key:    ${kpPath}`);
+    console.log("");
     console.log("  1) My Menu");
     console.log("  2) SolChat");
     console.log("  3) IQChan");
