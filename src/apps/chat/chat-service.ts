@@ -247,41 +247,45 @@ export class ChatService {
     }
 
     async listRooms() {
+        // NOTE: "hello worl.d" and "second room" exist on-chain but have
+        // un-migrated hashed seeds in DbRoot. They are skipped until the DbRoot
+        // creator (BWJfSKzEFxdfLMwG7chXxnyAHbZSh4STDFH62hobMt9j) runs migration.
+        // After migration, readable hints will be in table_seeds and they'll appear automatically.
+
         const list = await iqlabs.reader.getTablelistFromRoot(
             this.connection,
             this.dbRootId,
         );
         const dbRoot = iqlabs.contract.getDbRootPda(this.dbRootId, this.programId);
+
+        const rooms = [] as any[];
         const seedHexes = [
             ...new Set([...list.tableSeeds, ...list.globalTableSeeds]),
         ];
-        const rooms = [] as any[];
-
         for (const seedHex of seedHexes) {
-            const seed = Buffer.from(seedHex, "hex");
-            const table = iqlabs.contract.getTablePda(dbRoot, seed, this.programId);
+            const rawBytes = Buffer.from(seedHex, "hex");
+            const utf8 = rawBytes.toString("utf8");
+            const isReadable = rawBytes.length < 32 && /^[\x20-\x7e]+$/.test(utf8);
+
+            // Skip legacy 32-byte hashed seeds (un-migrated)
+            if (!isReadable) continue;
+
+            const pdaSeed = Buffer.from(iqlabs.utils.toSeedBytes(utf8));
+            const table = iqlabs.contract.getTablePda(dbRoot, pdaSeed, this.programId);
+            let name = isReadable ? utf8 : seedHex;
             const info = await this.connection.getAccountInfo(table);
-            let name = seedHex;
-            if (info) {
-                try {
-                    const decoded = this.accountCoder.decode("Table", info.data) as {
-                        name: Uint8Array;
-                    };
-                    const decodedName = Buffer.from(decoded.name)
-                        .toString("utf8")
-                        .replace(/\0+$/, "")
-                        .trim();
-                    if (decodedName) {
-                        name = decodedName;
-                    }
-                } catch {
-                    // ignore decode failures
-                }
-            }
-            rooms.push({
-                name,
-                seed,
-                seedHex,
+            if (!info) continue;
+            try {
+                const decoded = this.accountCoder.decode("Table", info.data) as {
+                    name: Uint8Array;
+                };
+                const decodedName = Buffer.from(decoded.name)
+                    .toString("utf8")
+                    .replace(/\0+$/, "")
+                    .trim();
+                if (decodedName) name = decodedName;
+            } catch {}
+            rooms.push({name, seed: pdaSeed, seedHex,
                 table,
             });
         }
@@ -313,6 +317,9 @@ export class ChatService {
             DM_COLUMNS,
             DM_ID_COL,
             [],
+            undefined,
+            undefined,
+            trimmed,
         );
         return {created: true, signature};
     }

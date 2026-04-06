@@ -52,15 +52,37 @@ export const selectFromList = async (
     stdin.resume();
 
     let index = 0;
+    const C = "\x1b[36m";  // cyan
+    const D = "\x1b[2m";   // dim
+    const R = "\x1b[0m";   // reset
+
     const draw = () => {
         console.clear();
         console.log(title);
         console.log("");
-        items.forEach((item, i) => {
-            console.log(render(item, i === index));
-        });
-        console.log("");
-        console.log("\x1b[2m  Enter = select  |  Esc = back\x1b[0m");
+
+        // Render items into lines to measure box width
+        const rendered = items.map((item, i) => render(item, i === index));
+        // Strip ANSI to measure real width
+        const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+        const maxW = Math.max(28, ...rendered.map(r => {
+            const lines = r.split("\n");
+            return Math.max(...lines.map(l => strip(l).length));
+        }));
+        const boxW = maxW + 2;
+
+        console.log(`  ${C}╔${"═".repeat(boxW)}╗${R}`);
+        for (const entry of rendered) {
+            const lines = entry.split("\n").filter(l => l.length > 0);
+            for (const line of lines) {
+                const padded = strip(line).length < boxW
+                    ? line + " ".repeat(boxW - strip(line).length)
+                    : line;
+                console.log(`  ${C}║${R}${padded}${C}║${R}`);
+            }
+        }
+        console.log(`  ${C}╚${"═".repeat(boxW)}╝${R}`);
+        console.log(`  ${D}↑↓ navigate  Enter select  Esc back${R}`);
     };
 
     return await new Promise<number | null>((resolve) => {

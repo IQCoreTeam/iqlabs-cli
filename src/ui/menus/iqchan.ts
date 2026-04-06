@@ -1,7 +1,7 @@
 import {IqchanService} from "../../apps/iqchan/iqchan-service";
 import type {Post, ThreadEntry} from "../../apps/iqchan/constants";
 import {logError, logInfo, RESET, BOLD, DIM, CYAN, GREEN, YELLOW, MAGENTA, WHITE, RED} from "../../utils/logger";
-import {prompt, selectFromList} from "../../utils/prompt";
+import {prompt, selectFromList, closeReadline} from "../../utils/prompt";
 import {formatDate, timeAgo, truncate, shortenSig} from "../../utils/format";
 
 const PAGE_SIZE = 20;
@@ -215,31 +215,81 @@ async function showThread(
         const remaining = allSigs.length - cursor;
         console.log(`  ${DIM}Loaded ${loaded.length}/${allSigs.length} posts${RESET}`);
         console.log(`  ${DIM}${"─".repeat(70)}${RESET}`);
-        const options: string[] = [];
-        if (remaining > 0) options.push(`${YELLOW}[M]${RESET}ore (${remaining})`);
-        options.push(`${GREEN}[R]${RESET}eply`);
-        options.push(`${DIM}[B]ack${RESET}`);
-        console.log(`  ${options.join("  ")}`);
     };
 
-    render();
+    // Bottom bar actions with ←→ selection
+    const actions: Array<{label: string; id: string}> = [];
+
+    const rebuildActions = () => {
+        actions.length = 0;
+        const remaining = allSigs.length - cursor;
+        if (remaining > 0) actions.push({label: `Load More (${remaining})`, id: "more"});
+        actions.push({label: "Reply", id: "reply"});
+        actions.push({label: "Back", id: "back"});
+    };
+
+    const drawBar = (sel: number) => {
+        // Move cursor to bottom and redraw action bar
+        const bar = actions.map((a, i) => {
+            if (i === sel) return `${BOLD}${CYAN}[ ${WHITE}${a.label}${CYAN} ]${RESET}`;
+            return `${DIM} ${a.label} ${RESET}`;
+        }).join("  ");
+        process.stdout.write(`\r  ${bar}  ${DIM}←→ select  Enter confirm${RESET}\x1b[K`);
+    };
+
+    const selectAction = async (): Promise<string | null> => {
+        rebuildActions();
+        render();
+        let sel = 0;
+        drawBar(sel);
+
+        closeReadline();
+        const readline = await import("node:readline");
+        const stdin = process.stdin;
+        const wasRaw = stdin.isRaw;
+        readline.emitKeypressEvents(stdin);
+        stdin.setRawMode(true);
+        stdin.resume();
+
+        return new Promise<string | null>((resolve) => {
+            const onKey = (_: string, key: any) => {
+                if (key.name === "left") {
+                    sel = (sel - 1 + actions.length) % actions.length;
+                    drawBar(sel);
+                } else if (key.name === "right") {
+                    sel = (sel + 1) % actions.length;
+                    drawBar(sel);
+                } else if (key.name === "return") {
+                    cleanup();
+                    resolve(actions[sel].id);
+                } else if (key.name === "escape" || key.sequence === "\x1b" || (key.ctrl && key.name === "c")) {
+                    cleanup();
+                    resolve("back");
+                }
+            };
+            const cleanup = () => {
+                stdin.off("keypress", onKey);
+                stdin.setRawMode(Boolean(wasRaw));
+                stdin.pause();
+            };
+            stdin.on("keypress", onKey);
+        });
+    };
 
     while (true) {
-        const input = (await prompt("> ")).trim().toLowerCase();
+        const action = await selectAction();
 
-        if (input === "b" || input === "back") break;
+        if (action === "back") break;
 
-        if (input === "m" || input === "more") {
-            if (cursor >= allSigs.length) {
-                logInfo("All posts loaded");
-                continue;
-            }
+        if (action === "more") {
+            if (cursor >= allSigs.length) continue;
+            console.log("");
             await loadBatch();
-            render();
             continue;
         }
 
-        if (input === "r" || input === "reply") {
+        if (action === "reply") {
+            console.log("");
             await replyFlow(
                 service,
                 threadSeed,
@@ -248,7 +298,6 @@ async function showThread(
                 loaded.length,
                 loaded.find(p => !!p.threadSeed)?.sub,
             );
-            render();
             continue;
         }
     }

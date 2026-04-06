@@ -2,24 +2,30 @@ import iqlabs from "@iqlabs-official/solana-sdk";
 import {PublicKey} from "@solana/web3.js";
 
 import {ChatService} from "../../apps/chat/chat-service";
-import {logError, logInfo, logTable} from "../../utils/logger";
+import {logError, logInfo, logTable, RESET, BOLD, DIM, CYAN, GREEN, WHITE} from "../../utils/logger";
 import {prompt, selectFromList} from "../../utils/prompt";
 
-const showChatMenu = () => {
-    console.log("\n============================");
-    console.log("          SolChat           ");
-    console.log("============================\n");
-    console.log("DM");
-    console.log("  1) See My Friend List");
-    console.log("  2) Request connection");
-    console.log("");
-    console.log("Room");
-    console.log("  3) Join room ");
-    console.log("  4) Create room (table)");
-    console.log("");
-    console.log("  9) Back");
-    console.log("\n============================\n");
-};
+const SOLCHAT_LOGO = `${BOLD}${CYAN}
+  ███████╗ ██████╗ ██╗      ██████╗██╗  ██╗ █████╗ ████████╗
+  ██╔════╝██╔═══██╗██║     ██╔════╝██║  ██║██╔══██╗╚══██╔══╝
+  ███████╗██║   ██║██║     ██║     ███████║███████║   ██║
+  ╚════██║██║   ██║██║     ██║     ██╔══██║██╔══██║   ██║
+  ███████║╚██████╔╝███████╗╚██████╗██║  ██║██║  ██║   ██║
+  ╚══════╝ ╚═════╝ ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝${RESET}
+`;
+
+const CHAT_MENU_ITEMS = [
+    {label: "Join Room", action: "rooms"},
+    {label: "Create Room", action: "create"},
+    {label: "DM", action: "dm"},
+    {label: "Back", action: null},
+];
+
+const DM_MENU_ITEMS = [
+    {label: "Friend List", action: "friends"},
+    {label: "Request Connection", action: "request"},
+    {label: "Back", action: null},
+];
 
 const runDmChat = async (service: ChatService, friend: any) => {
     console.clear();
@@ -213,6 +219,50 @@ const createRoom = async (service: ChatService) => {
     await prompt("Press Enter to continue...");
 };
 
+const DM_LOGO = `${BOLD}${CYAN}
+  ██████╗ ███╗   ███╗
+  ██╔══██╗████╗ ████║
+  ██║  ██║██╔████╔██║
+  ██║  ██║██║╚██╔╝██║
+  ██████╔╝██║ ╚═╝ ██║
+  ╚═════╝ ╚═╝     ╚═╝${RESET}
+`;
+
+const runDmMenu = async (service: ChatService) => {
+    while (true) {
+        const index = await selectFromList(
+            DM_LOGO,
+            DM_MENU_ITEMS,
+            (item, selected) => {
+                if (item.action === null) {
+                    return selected
+                        ? `  ${DIM}${CYAN}> ${WHITE}Back${RESET}`
+                        : `  ${DIM}  Back${RESET}`;
+                }
+                return selected
+                    ? `  ${BOLD}${CYAN}> ${WHITE}${item.label}${RESET}`
+                    : `  ${DIM}  ${item.label}${RESET}`;
+            },
+        );
+
+        if (index === null || DM_MENU_ITEMS[index].action === null) break;
+
+        try {
+            switch (DM_MENU_ITEMS[index].action) {
+                case "friends":
+                    await openFriendList(service);
+                    break;
+                case "request":
+                    await requestConnection(service);
+                    break;
+            }
+        } catch (err) {
+            logError("DM action failed", err);
+            await prompt("Press Enter to continue...");
+        }
+    }
+};
+
 export const runChatCommand = async () => {
     const service = new ChatService();
     try {
@@ -223,31 +273,35 @@ export const runChatCommand = async () => {
         return;
     }
 
-    let running = true;
-    while (running) {
-        console.clear();
-        showChatMenu();
-        const choice = (await prompt("Select option: ")).trim();
+    while (true) {
+        const index = await selectFromList(
+            SOLCHAT_LOGO,
+            CHAT_MENU_ITEMS,
+            (item, selected) => {
+                if (item.action === null) {
+                    return selected
+                        ? `  ${DIM}${CYAN}> ${WHITE}Back${RESET}`
+                        : `  ${DIM}  Back${RESET}`;
+                }
+                return selected
+                    ? `  ${BOLD}${CYAN}> ${WHITE}${item.label}${RESET}`
+                    : `  ${DIM}  ${item.label}${RESET}`;
+            },
+        );
+
+        if (index === null || CHAT_MENU_ITEMS[index].action === null) break;
+
         try {
-            switch (choice) {
-                case "1":
-                    await openFriendList(service);
-                    break;
-                case "2":
-                    await requestConnection(service);
-                    break;
-                case "3":
+            switch (CHAT_MENU_ITEMS[index].action) {
+                case "rooms":
                     await openRoomList(service);
                     break;
-                case "4":
+                case "create":
                     await createRoom(service);
                     break;
-                case "9":
-                    running = false;
+                case "dm":
+                    await runDmMenu(service);
                     break;
-                default:
-                    logError("Invalid option");
-                    await prompt("Press Enter to continue...");
             }
         } catch (err) {
             logError("Chat action failed", err);

@@ -1,55 +1,51 @@
-import {getWalletCtx, getKeypairInfo} from "../../utils/wallet_manager";
-import {logError, RESET, BOLD, DIM, CYAN, GREEN} from "../../utils/logger";
-import {prompt} from "../../utils/prompt";
+import {getWalletCtx} from "../../utils/wallet_manager";
+import {logError, RESET, BOLD, DIM, CYAN, GREEN, WHITE, YELLOW} from "../../utils/logger";
+import {prompt, selectFromList} from "../../utils/prompt";
 import {shortenSig} from "../../utils/format";
 import {runChatCommand} from "./chat";
 import {runMyMenu} from "./my-menu";
 import {runIqchanMenu} from "./iqchan";
 
-const showMainMenu = () => {
-    const {signer} = getWalletCtx();
-    const pubkey = signer.publicKey.toBase58();
-    const {path: kpPath} = getKeypairInfo();
+const LOGO = `${BOLD}${CYAN}
+  ██╗ ██████╗ ██╗      █████╗ ██████╗ ███████╗
+  ██║██╔═══██╗██║     ██╔══██╗██╔══██╗██╔════╝
+  ██║██║   ██║██║     ███████║██████╔╝███████╗
+  ██║██║▄▄ ██║██║     ██╔══██║██╔══██╗╚════██║
+  ██║╚██████╔╝███████╗██║  ██║██████╔╝███████║
+  ╚═╝ ╚══▀▀═╝ ╚══════╝╚═╝  ╚═╝╚═════╝ ╚══════╝${RESET}
+`;
 
-    console.log("");
-    console.log(`  ${BOLD}${CYAN}╔══════════════════════════╗${RESET}`);
-    console.log(`  ${BOLD}${CYAN}║   Solana Internet CLI    ║${RESET}`);
-    console.log(`  ${BOLD}${CYAN}╚══════════════════════════╝${RESET}`);
-    console.log(`  ${DIM}Wallet: ${GREEN}${shortenSig(pubkey, 6)}${RESET}`);
-    console.log(`  ${DIM}Key:    ${kpPath}${RESET}`);
-    console.log("");
-    console.log(`  ${BOLD}1${RESET}) My Menu`);
-    console.log(`  ${BOLD}2${RESET}) SolChat`);
-    console.log(`  ${BOLD}3${RESET}) IQChan`);
-    console.log("");
-    console.log(`  ${DIM}0) Exit${RESET}`);
-    console.log("");
-};
+const MENU_ITEMS = [
+    {label: "SolChat", action: runChatCommand},
+    {label: "IQChan", action: runIqchanMenu},
+    {label: "My Menu", action: runMyMenu},
+    {label: "Exit", action: null},
+];
 
 export const runMainMenu = async () => {
-    let running = true;
-    while (running) {
-        console.clear();
-        showMainMenu();
-        const choice = (await prompt("Select: ")).trim();
+    const {signer} = getWalletCtx();
+    const pubkey = shortenSig(signer.publicKey.toBase58(), 6);
+
+    while (true) {
+        const index = await selectFromList(
+            `${LOGO}${DIM}  Wallet: ${GREEN}${pubkey}${RESET}`,
+            MENU_ITEMS,
+            (item, selected) => {
+                if (item.action === null) {
+                    return selected
+                        ? `  ${DIM}${CYAN}> ${WHITE}Exit${RESET}`
+                        : `  ${DIM}  Exit${RESET}`;
+                }
+                return selected
+                    ? `  ${BOLD}${CYAN}> ${WHITE}${item.label}${RESET}`
+                    : `  ${DIM}  ${item.label}${RESET}`;
+            },
+        );
+
+        if (index === null || MENU_ITEMS[index].action === null) break;
+
         try {
-            switch (choice) {
-                case "1":
-                    await runMyMenu();
-                    break;
-                case "2":
-                    await runChatCommand();
-                    break;
-                case "3":
-                    await runIqchanMenu();
-                    break;
-                case "0":
-                    running = false;
-                    break;
-                default:
-                    logError("Invalid option");
-                    await prompt("Press Enter to continue...");
-            }
+            await MENU_ITEMS[index].action!();
         } catch (err) {
             logError("Error", err);
             await prompt("Press Enter to continue...");

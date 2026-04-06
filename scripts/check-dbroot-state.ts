@@ -1,11 +1,11 @@
 import {Connection, PublicKey} from "@solana/web3.js";
 import {BorshAccountsCoder, type Idl} from "@coral-xyz/anchor";
-import {createRequire} from "node:module";
 import {createHash} from "node:crypto";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import iqlabs from "@iqlabs-official/solana-sdk";
 
-const require2 = createRequire(import.meta.url);
-const IDL = require2("@iqlabs-official/solana-sdk/idl/code_in.json") as Idl;
+const IDL = JSON.parse(fs.readFileSync(path.join(process.cwd(), "node_modules/@iqlabs-official/solana-sdk/idl/code_in.json"), "utf8")) as Idl;
 
 async function checkDbRoot(label: string, dbRootIdRaw: Uint8Array | Buffer) {
     const connection = new Connection(iqlabs.getRpcUrl(), "confirmed");
@@ -51,6 +51,10 @@ async function main() {
     // iqchan
     const iqchanDbRootId = Buffer.from(iqlabs.utils.toSeedBytes("iqchan"));
     await checkDbRoot("iqchan", iqchanDbRootId);
+
+    // solchat
+    const solchatDbRootId = Buffer.from(iqlabs.utils.toSeedBytes("solchat-root"));
+    await checkDbRoot("solchat", solchatDbRootId);
 
     // moltchat (clawbal) — uses sha256
     const moltDbRootId = createHash("sha256").update("clawbal-iqlabs").digest();

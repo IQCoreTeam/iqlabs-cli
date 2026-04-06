@@ -4,27 +4,9 @@ import iqlabs from "@iqlabs-official/solana-sdk";
 
 import {ChatService} from "../../apps/chat/chat-service";
 import {getWalletCtx} from "../../utils/wallet_manager";
-import {logError, logInfo, logWarn, RESET, BOLD, DIM, CYAN, GREEN} from "../../utils/logger";
-import {prompt} from "../../utils/prompt";
+import {logError, logInfo, logWarn, RESET, BOLD, DIM, CYAN, GREEN, WHITE} from "../../utils/logger";
+import {prompt, selectFromList} from "../../utils/prompt";
 import {openFriendList} from "./chat";
-
-const showMenu = () => {
-    const {signer} = getWalletCtx();
-    const pubkey = signer.publicKey.toBase58();
-    console.log("");
-    console.log(`  ${BOLD}${CYAN}╔══════════════════════════╗${RESET}`);
-    console.log(`  ${BOLD}${CYAN}║        My Menu           ║${RESET}`);
-    console.log(`  ${BOLD}${CYAN}╚══════════════════════════╝${RESET}`);
-    console.log(`  ${DIM}Wallet: ${GREEN}${pubkey}${RESET}`);
-    console.log("");
-    console.log(`  ${BOLD}1${RESET}) RPC Settings`);
-    console.log(`  ${BOLD}2${RESET}) My Profile`);
-    console.log(`  ${BOLD}3${RESET}) My Inventory`);
-    console.log(`  ${BOLD}4${RESET}) DM Inbox`);
-    console.log("");
-    console.log(`  ${DIM}9) Back${RESET}`);
-    console.log("");
-};
 
 const ENV_PATH = path.join(process.cwd(), ".env");
 
@@ -75,16 +57,76 @@ const showInventory = async () => {
     const {connection, signer} = getWalletCtx();
     const pubkey = signer.publicKey;
     const inventoryPda = iqlabs.contract.getUserInventoryPda(pubkey);
-    logInfo(`Inventory PDA: ${inventoryPda.toBase58()}`);
 
     const info = await connection.getAccountInfo(inventoryPda);
-    if (info) {
-        logInfo(`Account exists, data length: ${info.data.length} bytes`);
-        logInfo(`Lamports: ${info.lamports}`);
-    } else {
+    if (!info) {
         logInfo("Inventory account not initialized");
+        await prompt("Press Enter to continue...");
+        return;
     }
-    await prompt("Press Enter to continue...");
+
+    // Fetch all transaction signatures for this inventory
+    logInfo("Fetching inventory transactions...");
+    let allSigs: string[];
+    try {
+        allSigs = await iqlabs.reader.collectSignatures(inventoryPda, 1000);
+    } catch {
+        logError("Failed to fetch transactions");
+        await prompt("Press Enter to continue...");
+        return;
+    }
+
+    if (allSigs.length === 0) {
+        logInfo("No inventory items found");
+        await prompt("Press Enter to continue...");
+        return;
+    }
+
+    // Show transaction list, select to view
+    const items = allSigs.map((sig, i) => ({
+        label: `${i + 1}. ${sig.slice(0, 12)}...${sig.slice(-8)}`,
+        sig,
+    }));
+
+    while (true) {
+        const index = await selectFromList(
+            `\n  ${BOLD}${CYAN}Inventory${RESET} ${DIM}(${allSigs.length} items)${RESET}`,
+            items,
+            (item, selected) => {
+                return selected
+                    ? `  ${BOLD}${CYAN}> ${WHITE}${item.label}${RESET}`
+                    : `  ${DIM}  ${item.label}${RESET}`;
+            },
+        );
+
+        if (index === null) return;
+
+        // Fetch and display selected item
+        console.clear();
+        logInfo(`Reading ${items[index].label}...`);
+        try {
+            const result = await iqlabs.reader.readCodeIn(items[index].sig);
+            console.log("");
+            if (result.metadata) {
+                console.log(`  ${BOLD}Metadata:${RESET} ${result.metadata}`);
+            }
+            if (result.data) {
+                try {
+                    const parsed = JSON.parse(result.data);
+                    console.log(`  ${BOLD}Data:${RESET}`);
+                    console.log(JSON.stringify(parsed, null, 2).split("\n").map(l => `    ${l}`).join("\n"));
+                } catch {
+                    console.log(`  ${BOLD}Data:${RESET} ${result.data.slice(0, 200)}${result.data.length > 200 ? "..." : ""}`);
+                }
+            } else {
+                console.log(`  ${DIM}(no data)${RESET}`);
+            }
+        } catch (err) {
+            logError("Failed to read", err instanceof Error ? err.message : String(err));
+        }
+        console.log("");
+        await prompt("Press Enter to go back...");
+    }
 };
 
 const dmInbox = async () => {
@@ -107,33 +149,38 @@ const dmInbox = async () => {
     await openFriendList(service);
 };
 
+const MY_MENU_ITEMS = [
+    {label: "RPC Settings", action: rpcSettings},
+    {label: "My Profile", action: showProfile},
+    {label: "My Inventory", action: showInventory},
+    {label: "DM Inbox", action: dmInbox},
+    {label: "Back", action: null},
+];
+
 export const runMyMenu = async () => {
-    let running = true;
-    while (running) {
-        console.clear();
-        showMenu();
-        const choice = (await prompt("Select: ")).trim();
+    const {signer} = getWalletCtx();
+    const pubkey = signer.publicKey.toBase58();
+
+    while (true) {
+        const index = await selectFromList(
+            `\n  ${BOLD}${CYAN}╔══════════════════════════╗${RESET}\n  ${BOLD}${CYAN}║        My Menu           ║${RESET}\n  ${BOLD}${CYAN}╚══════════════════════════╝${RESET}\n  ${DIM}Wallet: ${GREEN}${pubkey}${RESET}`,
+            MY_MENU_ITEMS,
+            (item, selected) => {
+                if (item.action === null) {
+                    return selected
+                        ? `  ${DIM}${CYAN}> ${WHITE}Back${RESET}`
+                        : `  ${DIM}  Back${RESET}`;
+                }
+                return selected
+                    ? `  ${BOLD}${CYAN}> ${WHITE}${item.label}${RESET}`
+                    : `  ${DIM}  ${item.label}${RESET}`;
+            },
+        );
+
+        if (index === null || MY_MENU_ITEMS[index].action === null) break;
+
         try {
-            switch (choice) {
-                case "1":
-                    await rpcSettings();
-                    break;
-                case "2":
-                    await showProfile();
-                    break;
-                case "3":
-                    await showInventory();
-                    break;
-                case "4":
-                    await dmInbox();
-                    break;
-                case "9":
-                    running = false;
-                    break;
-                default:
-                    logError("Invalid option");
-                    await prompt("Press Enter to continue...");
-            }
+            await MY_MENU_ITEMS[index].action!();
         } catch (err) {
             logError("Error", err);
             await prompt("Press Enter to continue...");
