@@ -2,7 +2,7 @@ import iqlabs from "@iqlabs-official/solana-sdk";
 import {PublicKey} from "@solana/web3.js";
 
 import {ChatService} from "../../apps/chat/chat-service";
-import {logError, logInfo, logTable, RESET, BOLD, DIM, CYAN, GREEN, WHITE} from "../../utils/logger";
+import {logError, logInfo, logTable, RESET, BOLD, DIM, CYAN, GREEN, WHITE, RED, YELLOW, MAGENTA} from "../../utils/logger";
 import {prompt, selectFromList} from "../../utils/prompt";
 
 const SOLCHAT_LOGO = `${BOLD}${CYAN}
@@ -24,6 +24,7 @@ const CHAT_MENU_ITEMS = [
 const DM_MENU_ITEMS = [
     {label: "Friend List", action: "friends"},
     {label: "Request Connection", action: "request"},
+    {label: "(^_~) Spy on DM", action: "spy"},
     {label: "Back", action: null},
 ];
 
@@ -219,6 +220,178 @@ const createRoom = async (service: ChatService) => {
     await prompt("Press Enter to continue...");
 };
 
+const resolveNickname = async (walletAddress: string): Promise<string | null> => {
+    try {
+        const state = await iqlabs.reader.readUserState(walletAddress);
+        const meta = (state as any).metadata ?? (state as any).meta ?? null;
+        if (!meta || typeof meta !== "string") return null;
+
+        // If metadata looks like a Solana tx signature, fetch the actual profile data
+        if (meta.length <= 100 && /^[1-9A-HJ-NP-Za-km-z]+$/.test(meta)) {
+            const result = await iqlabs.reader.readCodeIn(meta);
+            if (result.data) {
+                const parsed = JSON.parse(result.data);
+                return parsed.name || null;
+            }
+        }
+        // Otherwise try direct JSON
+        try {
+            const parsed = JSON.parse(meta);
+            return parsed.name || null;
+        } catch {
+            return null;
+        }
+    } catch {
+        return null;
+    }
+};
+
+const shortenAddr = (addr: string) =>
+    addr.length > 12 ? `${addr.slice(0, 4)}...${addr.slice(-4)}` : addr;
+
+const SPY_BANNER = `${BOLD}${RED}
+  +====================================================================+
+  |  (o_O) DM SPY MODE                                                 |
+  |                                                                     |
+  |  You are reading someone else's private conversation.               |
+  |  Right now. In real time. Every single word.                        |
+  |                                                                     |
+  |  No server stopped you. No password blocked you.                    |
+  |  Nothing stood between you and their messages.                      |
+  |                                                                     |
+  |  ${WHITE}With IQ Encryption: ONLY the wallet owner can decrypt.${RED}           |
+  |  ${WHITE}No server. No middleman. No backdoor. Just math.${RED}                 |
+  +====================================================================+${RESET}`;
+
+const spyOnDm = async (service: ChatService) => {
+    console.clear();
+    console.log(SPY_BANNER);
+    console.log();
+    console.log(`${YELLOW}Pick any two wallets. Their entire conversation is yours to read.${RESET}`);
+    console.log(`${DIM}This is what "no encryption" really means.${RESET}`);
+    console.log();
+
+    const addrA = (await prompt(`${CYAN}Participant A wallet address: ${RESET}`)).trim();
+    if (!addrA) {
+        logError("Address A is required");
+        return;
+    }
+    let pubA: PublicKey;
+    try {
+        pubA = new PublicKey(addrA);
+    } catch {
+        logError("Invalid address for Participant A");
+        return;
+    }
+
+    const addrB = (await prompt(`${CYAN}Participant B wallet address: ${RESET}`)).trim();
+    if (!addrB) {
+        logError("Address B is required");
+        return;
+    }
+    let pubB: PublicKey;
+    try {
+        pubB = new PublicKey(addrB);
+    } catch {
+        logError("Invalid address for Participant B");
+        return;
+    }
+
+    if (pubA.equals(pubB)) {
+        logError("Both addresses are the same");
+        return;
+    }
+
+    const dmSeed = service.deriveDmSeed(addrA, addrB);
+    const connectionTable = service.deriveConnectionTable(dmSeed);
+
+    console.clear();
+    console.log(SPY_BANNER);
+    console.log();
+    console.log(`${DIM}Resolving identities...${RESET}`);
+
+    // Resolve nicknames for both participants
+    const [nickA, nickB] = await Promise.all([
+        resolveNickname(addrA),
+        resolveNickname(addrB),
+    ]);
+    const labelA = nickA ?? shortenAddr(addrA);
+    const labelB = nickB ?? shortenAddr(addrB);
+
+    console.clear();
+    console.log(SPY_BANNER);
+    console.log();
+    console.log(`${RED}${BOLD}TARGET ACQUIRED${RESET}`);
+    console.log(`  ${CYAN}Victim A: ${BOLD}${nickA ? nickA : shortenAddr(addrA)}${RESET}${CYAN}${nickA ? ` (${shortenAddr(addrA)})` : ""}${RESET}`);
+    console.log(`  ${MAGENTA}Victim B: ${BOLD}${nickB ? nickB : shortenAddr(addrB)}${RESET}${MAGENTA}${nickB ? ` (${shortenAddr(addrB)})` : ""}${RESET}`);
+    console.log(`  ${DIM}On-chain table: ${connectionTable.toBase58()}${RESET}`);
+    console.log();
+
+    // Build a sender → label map for message display
+    const senderLabelMap = new Map<string, { label: string; color: string; tag: string }>();
+    senderLabelMap.set(addrA, {label: labelA, color: CYAN, tag: "A"});
+    senderLabelMap.set(addrB, {label: labelB, color: MAGENTA, tag: "B"});
+
+    const resolveSender = (sender: string) => {
+        const exact = senderLabelMap.get(sender);
+        if (exact) return exact;
+        // Partial match (sender might be a nickname or shortened)
+        for (const [addr, info] of senderLabelMap) {
+            if (sender.startsWith(addr.slice(0, 6)) || sender === info.label) return info;
+        }
+        return {label: shortenAddr(sender), color: DIM, tag: "?"};
+    };
+
+    // Load existing history
+    try {
+        const history = await service.fetchDmHistory(dmSeed, {limit: 30});
+        if (history.length > 0) {
+            console.log(`${YELLOW}--- INTERCEPTED: ${history.length} messages exposed ---${RESET}`);
+            for (const msg of history) {
+                const data = typeof msg === "string" ? JSON.parse(msg) : msg;
+                const sender = data.sender ?? "unknown";
+                const resolved = resolveSender(sender);
+                const time = data.timestamp ? new Date(data.timestamp).toLocaleTimeString() : "";
+                const content = data.text ?? data.data ?? JSON.stringify(data);
+                console.log(`  ${resolved.color}${BOLD}${resolved.label}${RESET} ${DIM}${time}${RESET}  ${content}`);
+            }
+            console.log();
+        } else {
+            logInfo("No message history found between these wallets");
+            console.log();
+        }
+    } catch {
+        logInfo("No DM table found between these wallets. They may not have chatted yet");
+        console.log();
+    }
+
+    // Subscribe for real-time updates
+    console.log(`${RED}${BOLD}(*_*) LIVE INTERCEPT ACTIVE${RESET}`);
+    console.log(`${RED}Every message appears here the moment it's sent.${RESET}`);
+    console.log(`${RED}They have no idea you're watching.${RESET}`);
+    console.log();
+    console.log(`${GREEN}${BOLD}With IQ Encryption, this screen would be nothing but noise.${RESET}`);
+    console.log(`${GREEN}Only the wallet owner holds the key. Not the server. Not you. Nobody.${RESET}`);
+    console.log(`${DIM}/exit to stop${RESET}`);
+    console.log();
+
+    let stop: (() => void) | null = null;
+    try {
+        stop = await service.joinDm(dmSeed, {limit: 30});
+    } catch {
+        logInfo("Could not subscribe. Table may not exist. Waiting for messages...");
+    }
+
+    try {
+        while (true) {
+            const input = (await prompt("")).trim();
+            if (input === "/exit") break;
+        }
+    } finally {
+        if (stop) stop();
+    }
+};
+
 const DM_LOGO = `${BOLD}${CYAN}
   ██████╗ ███╗   ███╗
   ██╔══██╗████╗ ████║
@@ -254,6 +427,9 @@ const runDmMenu = async (service: ChatService) => {
                     break;
                 case "request":
                     await requestConnection(service);
+                    break;
+                case "spy":
+                    await spyOnDm(service);
                     break;
             }
         } catch (err) {

@@ -400,6 +400,15 @@ export class ChatService {
         return this.subscribeToAccount(connectionTable, options);
     }
 
+    deriveDmSeed(partyA: string, partyB: string): Uint8Array {
+        return iqlabs.utils.deriveDmSeed(partyA, partyB);
+    }
+
+    deriveConnectionTable(dmSeed: Uint8Array): PublicKey {
+        const dbRoot = iqlabs.contract.getDbRootPda(this.dbRootId, this.programId);
+        return iqlabs.contract.getConnectionTablePda(dbRoot, dmSeed, this.programId);
+    }
+
     deriveRoomTable(roomSeed: Uint8Array) {
         const dbRoot = iqlabs.contract.getDbRootPda(this.dbRootId, this.programId);
         const table = iqlabs.contract.getTablePda(dbRoot, roomSeed, this.programId);
