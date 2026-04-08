@@ -2,6 +2,7 @@ import {randomUUID} from "node:crypto";
 import {PublicKey, SystemProgram} from "@solana/web3.js";
 import type {Connection, Signer} from "@solana/web3.js";
 import {BorshAccountsCoder} from "@coral-xyz/anchor";
+import {ed25519} from "@noble/curves/ed25519";
 import iqlabs from "@iqlabs-official/solana-sdk";
 
 import {getWalletCtx} from "../../utils/wallet_manager";
@@ -200,6 +201,165 @@ export class ChatService {
             dmSeed,
             rowJson,
         );
+    }
+
+    // Deterministic ed25519 signer from this wallet's secret key.
+    // Used by deriveX25519Keypair to produce a DH keypair that is
+    // reproducible for the same wallet.
+    private signWithWallet = async (msg: Uint8Array): Promise<Uint8Array> => {
+        const secret = (this.signer as any).secretKey as Uint8Array;
+        if (!secret || secret.length < 32) {
+            throw new Error("wallet does not expose a raw secret key for signing");
+        }
+        return ed25519.sign(msg, secret.slice(0, 32));
+    };
+
+    async deriveMyDhKeypair(): Promise<{ privKey: Uint8Array; pubKey: Uint8Array; pubHex: string }> {
+        const crypto = (iqlabs as any).crypto;
+        const {privKey, pubKey} = await crypto.deriveX25519Keypair(this.signWithWallet);
+        return {privKey, pubKey, pubHex: crypto.bytesToHex(pubKey)};
+    }
+
+    async registerMyDhKey(): Promise<string> {
+        const {pubHex} = await this.deriveMyDhKeypair();
+        const payload = JSON.stringify({t: "iq-locker-key-v1", k: pubHex});
+        return iqlabs.writer.codeIn(
+            {connection: this.connection, signer: this.signer},
+            payload,
+            "locker-key.json",
+            0,
+            "application/json",
+        );
+    }
+
+    // Idempotent: if our DH key is already on-chain, return it without
+    // spending any SOL. Otherwise derive + register it once and cache.
+    async ensureMyDhKey(): Promise<{ pubHex: string; created: boolean; signature?: string }> {
+        const myAddress = this.signer.publicKey.toBase58();
+        const cached = ChatService._dhKeyCache.get(myAddress);
+        if (cached) return {pubHex: cached, created: false};
+
+        const me = await this.deriveMyDhKeypair();
+        const existing = await this.lookupDhKey(myAddress);
+        if (existing === me.pubHex) {
+            ChatService._dhKeyCache.set(myAddress, me.pubHex);
+            return {pubHex: me.pubHex, created: false};
+        }
+
+        const signature = await this.registerMyDhKey();
+        ChatService._dhKeyCache.set(myAddress, me.pubHex);
+        return {pubHex: me.pubHex, created: true, signature};
+    }
+
+    // Module-level cache so repeat DM opens don't re-check the chain.
+    private static _dhKeyCache = new Map<string, string>();
+
+    // Scan a user's inventory code_in transactions to find their locker-key.json.
+    // Returns the hex X25519 public key, or null if not registered.
+    async lookupDhKey(walletAddress: string): Promise<string | null> {
+        try {
+            const pubkey = new PublicKey(walletAddress);
+            const inventoryPda = iqlabs.contract.getUserInventoryPda(pubkey, this.programId);
+            const signatures = await this.connection.getSignaturesForAddress(inventoryPda, {limit: 100});
+            for (const sig of signatures) {
+                try {
+                    const result = await iqlabs.reader.readCodeIn(sig.signature);
+                    if (!result?.data) continue;
+                    const meta = typeof result.metadata === "string"
+                        ? JSON.parse(result.metadata)
+                        : result.metadata;
+                    if (meta?.filename !== "locker-key.json") continue;
+                    const parsed = JSON.parse(result.data);
+                    if (parsed?.t === "iq-locker-key-v1" && typeof parsed.k === "string") {
+                        return parsed.k;
+                    }
+                } catch {
+                    continue;
+                }
+            }
+        } catch {
+            return null;
+        }
+        return null;
+    }
+
+    async sendEncryptedDm(
+        dmSeed: Uint8Array,
+        partnerAddress: string,
+        message: string,
+        handle?: string,
+    ): Promise<{signature: string; partnerHasKey: boolean}> {
+        const trimmed = message.trim();
+        if (!trimmed) throw new Error("message is empty");
+
+        const crypto = (iqlabs as any).crypto;
+        const me = await this.deriveMyDhKeypair();
+        const partnerPub = await this.lookupDhKey(partnerAddress);
+        if (!partnerPub) {
+            throw new Error(
+                `Partner has not registered an IQ encryption key yet: ${partnerAddress}`,
+            );
+        }
+
+        const plaintext = new TextEncoder().encode(trimmed);
+        const encrypted = await crypto.multiEncrypt([me.pubHex, partnerPub], plaintext);
+
+        // iq-locker style compact envelope
+        const envelope = {
+            m: "dm",
+            r: encrypted.recipients.map((r: any) => [
+                r.recipientPub, r.ephemeralPub, r.wrappedKey, r.wrapIv,
+            ]),
+            i: encrypted.iv,
+            c: encrypted.ciphertext,
+        };
+
+        const rowJson = JSON.stringify({
+            id: makeMessageId(12),
+            text: JSON.stringify(envelope),
+            sender: handle?.trim() || this.signer.publicKey.toBase58(),
+            timestamp: Date.now(),
+            enc: 1,
+        });
+
+        const signature = await iqlabs.writer.writeConnectionRow(
+            this.connection,
+            this.signer,
+            this.dbRootId,
+            dmSeed,
+            rowJson,
+        );
+        return {signature, partnerHasKey: true};
+    }
+
+    // Try to decrypt a DM row's text. Returns { text, encrypted } — text is
+    // plaintext if decryption succeeded, otherwise the raw envelope string.
+    async tryDecryptDmRow(row: any): Promise<{ text: string; encrypted: boolean; decrypted: boolean }> {
+        const raw = typeof row === "string" ? (() => { try { return JSON.parse(row); } catch { return {text: row}; } })() : row;
+        const text = raw?.text ?? "";
+        // Quick check: encrypted rows carry an envelope JSON in `text` starting with {"m":"dm"
+        if (typeof text !== "string" || !text.startsWith('{"m":"dm"')) {
+            return {text, encrypted: false, decrypted: false};
+        }
+        try {
+            const env = JSON.parse(text);
+            if (env.m !== "dm" || !Array.isArray(env.r)) {
+                return {text, encrypted: false, decrypted: false};
+            }
+            const crypto = (iqlabs as any).crypto;
+            const me = await this.deriveMyDhKeypair();
+            const recipients = env.r.map((r: string[]) => ({
+                recipientPub: r[0], ephemeralPub: r[1], wrappedKey: r[2], wrapIv: r[3],
+            }));
+            const plain = await crypto.multiDecrypt(me.privKey, me.pubHex, {
+                recipients,
+                iv: env.i,
+                ciphertext: env.c,
+            });
+            return {text: new TextDecoder().decode(plain), encrypted: true, decrypted: true};
+        } catch {
+            return {text, encrypted: true, decrypted: false};
+        }
     }
 
     async fetchDmHistory(

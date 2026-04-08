@@ -30,9 +30,46 @@ const DM_MENU_ITEMS = [
 
 const runDmChat = async (service: ChatService, friend: any) => {
     console.clear();
+
+    // Make sure my own DH key is registered (auto, idempotent).
+    // Then check whether the partner has one too.
+    console.log(`${DIM}Preparing IQ encryption...${RESET}`);
+    let myKey: string | null = null;
+    try {
+        const ensured = await service.ensureMyDhKey();
+        myKey = ensured.pubHex;
+        if (ensured.created) {
+            console.log(`${GREEN}Your IQ encryption key was auto-registered on-chain.${RESET}`);
+            console.log(`  ${DIM}Signature: ${ensured.signature}${RESET}`);
+        }
+    } catch (err) {
+        logError("Failed to ensure your encryption key", err);
+    }
+    const partnerKey = await service.lookupDhKey(friend.address);
+    const canEncrypt = !!(partnerKey && myKey);
+
+    console.clear();
+    if (canEncrypt) {
+        console.log(`${GREEN}${BOLD}(^_^)/ IQ ENCRYPTION ACTIVE${RESET}`);
+        console.log(`${GREEN}Messages are end-to-end encrypted. Only you and ${friend.address} can read them.${RESET}`);
+    } else {
+        console.log(`${YELLOW}${BOLD}(>_<) PLAINTEXT MODE${RESET}`);
+        if (!myKey) console.log(`${YELLOW}You have not registered your encryption key. Use the menu to register it.${RESET}`);
+        if (!partnerKey) console.log(`${YELLOW}Partner has not registered an encryption key. Messages will be readable by anyone.${RESET}`);
+    }
+    console.log();
+
     const history = await service.fetchDmHistory(friend.seed, {limit: 20});
     if (history.length > 0) {
-        logTable(history);
+        for (const msg of history) {
+            const data = typeof msg === "string" ? (() => { try { return JSON.parse(msg); } catch { return {text: msg}; } })() : msg;
+            const decoded = await service.tryDecryptDmRow(data);
+            const sender = data.sender ?? "?";
+            const isMe = sender === service.signer.publicKey.toBase58();
+            const color = isMe ? CYAN : MAGENTA;
+            const lock = decoded.encrypted ? (decoded.decrypted ? `${GREEN}[enc]${RESET}` : `${RED}[enc?]${RESET}`) : "";
+            console.log(`  ${color}${sender.slice(0, 8)}${RESET} ${lock} ${decoded.text}`);
+        }
     } else {
         logInfo("No messages yet");
     }
@@ -56,7 +93,16 @@ const runDmChat = async (service: ChatService, friend: any) => {
                 logInfo("Blocked");
                 continue;
             }
-            await service.sendDm(friend.seed, input);
+            if (canEncrypt) {
+                try {
+                    await service.sendEncryptedDm(friend.seed, friend.address, input);
+                } catch (err) {
+                    logError("Encrypted send failed, falling back to plaintext", err);
+                    await service.sendDm(friend.seed, input);
+                }
+            } else {
+                await service.sendDm(friend.seed, input);
+            }
         }
     } finally {
         stop();
@@ -342,18 +388,34 @@ const spyOnDm = async (service: ChatService) => {
         return {label: shortenAddr(sender), color: DIM, tag: "?"};
     };
 
+    const renderSpyRow = (data: any) => {
+        const sender = data.sender ?? "unknown";
+        const resolved = resolveSender(sender);
+        const time = data.timestamp ? new Date(data.timestamp).toLocaleTimeString() : "";
+        const rawText = typeof data.text === "string" ? data.text : JSON.stringify(data.text ?? data);
+        const isEncrypted = typeof rawText === "string" && rawText.startsWith('{"m":"dm"');
+        if (isEncrypted) {
+            // Show the encrypted envelope as garbled-looking ciphertext
+            try {
+                const env = JSON.parse(rawText);
+                const preview = `[encrypted] iv=${String(env.i).slice(0, 16)}... ct=${String(env.c).slice(0, 48)}...`;
+                console.log(`  ${resolved.color}${BOLD}${resolved.label}${RESET} ${DIM}${time}${RESET}  ${RED}${preview}${RESET}`);
+            } catch {
+                console.log(`  ${resolved.color}${BOLD}${resolved.label}${RESET} ${DIM}${time}${RESET}  ${RED}${rawText.slice(0, 80)}...${RESET}`);
+            }
+        } else {
+            console.log(`  ${resolved.color}${BOLD}${resolved.label}${RESET} ${DIM}${time}${RESET}  ${rawText}`);
+        }
+    };
+
     // Load existing history
     try {
         const history = await service.fetchDmHistory(dmSeed, {limit: 30});
         if (history.length > 0) {
             console.log(`${YELLOW}--- INTERCEPTED: ${history.length} messages exposed ---${RESET}`);
             for (const msg of history) {
-                const data = typeof msg === "string" ? JSON.parse(msg) : msg;
-                const sender = data.sender ?? "unknown";
-                const resolved = resolveSender(sender);
-                const time = data.timestamp ? new Date(data.timestamp).toLocaleTimeString() : "";
-                const content = data.text ?? data.data ?? JSON.stringify(data);
-                console.log(`  ${resolved.color}${BOLD}${resolved.label}${RESET} ${DIM}${time}${RESET}  ${content}`);
+                const data = typeof msg === "string" ? (() => { try { return JSON.parse(msg); } catch { return {text: msg}; } })() : msg;
+                renderSpyRow(data);
             }
             console.log();
         } else {
