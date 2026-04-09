@@ -1,4 +1,4 @@
-import {randomUUID} from "node:crypto";
+import {randomUUID, createHash} from "node:crypto";
 import {PublicKey, SystemProgram} from "@solana/web3.js";
 import type {Connection, Signer} from "@solana/web3.js";
 import {BorshAccountsCoder} from "@coral-xyz/anchor";
@@ -13,6 +13,17 @@ const DEFAULT_ROOT_ID = "solchat-root";
 const DM_TABLE_NAME = "dm";
 const DM_COLUMNS = ["id", "text", "file", "sender", "timestamp"];
 const DM_ID_COL = "id";
+
+// Anchor instruction discriminators = sha256("global:<name>")[0..8].
+// These let us recognize connection-related instructions without relying on
+// the SDK's instructionCoder (which currently fails to decode them).
+const anchorDisc = (name: string) =>
+    createHash("sha256").update(`global:${name}`).digest().slice(0, 8);
+const REQUEST_CONNECTION_DISC = anchorDisc("request_connection");
+const MANAGE_CONNECTION_DISC = anchorDisc("manage_connection");
+// In the request_connection / manage_connection instructions, the
+// `connection_table` PDA is the 4th account (index 3 in accountKeyIndexes).
+const CONNECTION_TABLE_IX_INDEX = 3;
 
 const makeMessageId = (sliceLength?: number) => {
     const uuid = typeof randomUUID === "function" ? randomUUID() : "";
@@ -375,35 +386,112 @@ export class ChatService {
         return iqlabs.reader.readTableRows(connectionTable, options);
     }
 
+    // Scan the user's UserState tx history, filter to request_connection /
+    // manage_connection instructions, and pull the connection_table PDA
+    // straight from each instruction's account list. Unlike
+    // iqlabs.reader.fetchUserConnections (which relies on an SDK instruction
+    // coder that currently mis-decodes these instructions and silently skips
+    // incoming requests), this walks the raw compiled instructions by
+    // discriminator, so it catches both incoming and outgoing connections.
     async listFriends() {
         const owner = this.signer.publicKey;
         const ownerBase58 = owner.toBase58();
         const rootIdStr = Buffer.from(this.dbRootId).toString("utf8");
-        const connections = await iqlabs.reader.fetchUserConnections(owner);
+        const userState = iqlabs.contract.getUserPda(owner, this.programId);
 
-        return connections
-            .filter((c) => c.dbRootId === rootIdStr)
-            .map((c) => ({
-                address: c.partyA === ownerBase58 ? c.partyB : c.partyA,
-                status: c.status,
-                statusCode:
-                    c.status === "pending"
-                        ? iqlabs.contract.CONNECTION_STATUS_PENDING
-                        : c.status === "approved"
-                            ? iqlabs.contract.CONNECTION_STATUS_APPROVED
-                            : c.status === "blocked"
-                                ? iqlabs.contract.CONNECTION_STATUS_BLOCKED
-                                : -1,
-                requester: c.requester,
-                blocker: c.blocker,
-                seed: iqlabs.utils.deriveDmSeed(c.partyA, c.partyB),
-                table: new PublicKey(c.connectionPda),
-                partyA: c.partyA,
-                partyB: c.partyB,
-                lastTimestamp: c.timestamp ?? 0,
-                dbRootId: c.dbRootId,
-            }))
-            .sort((a, b) => Number(b.lastTimestamp ?? 0) - Number(a.lastTimestamp ?? 0));
+        const sigs = await this.connection.getSignaturesForAddress(userState, {
+            limit: 200,
+        });
+
+        const connectionPdas = new Map<string, number>(); // pdaBase58 -> latest blockTime
+        for (const sig of sigs) {
+            let tx;
+            try {
+                tx = await this.connection.getTransaction(sig.signature, {
+                    maxSupportedTransactionVersion: 0,
+                });
+            } catch {
+                continue;
+            }
+            if (!tx) continue;
+            const keys = tx.transaction.message.getAccountKeys();
+            for (const ix of tx.transaction.message.compiledInstructions) {
+                const programKey = keys.get(ix.programIdIndex);
+                if (!programKey || !programKey.equals(this.programId)) continue;
+                const disc = Buffer.from(ix.data).slice(0, 8);
+                if (!disc.equals(REQUEST_CONNECTION_DISC) && !disc.equals(MANAGE_CONNECTION_DISC)) {
+                    continue;
+                }
+                const ctGlobalIdx = ix.accountKeyIndexes[CONNECTION_TABLE_IX_INDEX];
+                if (ctGlobalIdx === undefined) continue;
+                const ctKey = keys.get(ctGlobalIdx);
+                if (!ctKey) continue;
+                const ctStr = ctKey.toBase58();
+                const ts = sig.blockTime ?? 0;
+                const prev = connectionPdas.get(ctStr) ?? 0;
+                if (ts > prev) connectionPdas.set(ctStr, ts);
+            }
+        }
+
+        const results: any[] = [];
+        for (const [pdaStr, lastTs] of connectionPdas) {
+            let info;
+            try {
+                info = await this.connection.getAccountInfo(new PublicKey(pdaStr));
+            } catch {
+                continue;
+            }
+            if (!info) continue;
+            let decoded: any;
+            try {
+                decoded = this.accountCoder.decode("Connection", info.data);
+            } catch {
+                continue;
+            }
+            const partyA = new PublicKey(decoded.party_a).toBase58();
+            const partyB = new PublicKey(decoded.party_b).toBase58();
+            if (partyA !== ownerBase58 && partyB !== ownerBase58) continue;
+
+            const dbRootId = Buffer.from(decoded.db_root_id)
+                .toString("utf8")
+                .replace(/\0+$/, "");
+            if (dbRootId !== rootIdStr) continue;
+
+            const statusCode = Number(decoded.status);
+            const status =
+                statusCode === iqlabs.contract.CONNECTION_STATUS_PENDING
+                    ? "pending"
+                    : statusCode === iqlabs.contract.CONNECTION_STATUS_APPROVED
+                        ? "approved"
+                        : statusCode === iqlabs.contract.CONNECTION_STATUS_BLOCKED
+                            ? "blocked"
+                            : "unknown";
+            const requesterRaw = Number(decoded.requester); // 0 = partyA, 1 = partyB
+            const blockerRaw = Number(decoded.blocker);     // 0 / 1 / 255
+            const requesterAddress = requesterRaw === 0 ? partyA : partyB;
+            const blockerAddress =
+                blockerRaw === 0 ? partyA : blockerRaw === 1 ? partyB : null;
+
+            results.push({
+                address: partyA === ownerBase58 ? partyB : partyA,
+                status,
+                statusCode,
+                requester: requesterAddress,
+                requesterRaw,
+                blocker: blockerAddress,
+                blockerRaw,
+                seed: iqlabs.utils.deriveDmSeed(partyA, partyB),
+                table: new PublicKey(pdaStr),
+                partyA,
+                partyB,
+                lastTimestamp: lastTs,
+                dbRootId,
+            });
+        }
+
+        return results.sort(
+            (a, b) => Number(b.lastTimestamp ?? 0) - Number(a.lastTimestamp ?? 0),
+        );
     }
 
     async listRooms() {
