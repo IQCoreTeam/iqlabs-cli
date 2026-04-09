@@ -23,6 +23,7 @@ const CHAT_MENU_ITEMS = [
 
 const DM_MENU_ITEMS = [
     {label: "Friend List", action: "friends"},
+    {label: "Pending Requests", action: "pending"},
     {label: "Request Connection", action: "request"},
     {label: "(^_~) Spy on DM", action: "spy"},
     {label: "Back", action: null},
@@ -169,6 +170,79 @@ const handleFriendSelect = async (service: ChatService, friend: any) => {
         return;
     }
     await runDmChat(service, friend);
+};
+
+const openPendingRequests = async (service: ChatService) => {
+    const friends = await service.listFriends();
+    const myAddress = service.signer.publicKey.toBase58();
+
+    // Incoming pending = status is pending AND I'm NOT the requester
+    const incoming = friends.filter(
+        (f) => f.status === "pending" && f.requester !== myAddress,
+    );
+    // Outgoing pending = status is pending AND I AM the requester
+    const outgoing = friends.filter(
+        (f) => f.status === "pending" && f.requester === myAddress,
+    );
+
+    if (incoming.length === 0 && outgoing.length === 0) {
+        logInfo("No pending requests");
+        await prompt("Press Enter to continue...");
+        return;
+    }
+
+    console.clear();
+    console.log(`${BOLD}${CYAN}Pending Requests${RESET}`);
+    console.log();
+    if (outgoing.length > 0) {
+        console.log(`${DIM}Sent by you (${outgoing.length}) - waiting for them to approve:${RESET}`);
+        for (const f of outgoing) {
+            console.log(`  ${DIM}-> ${f.address}${RESET}`);
+        }
+        console.log();
+    }
+
+    if (incoming.length === 0) {
+        logInfo("No incoming requests to respond to");
+        await prompt("Press Enter to continue...");
+        return;
+    }
+
+    console.log(`${GREEN}Received (${incoming.length}) - pick one to Approve / Block:${RESET}`);
+    const items = [
+        ...incoming.map((f) => ({kind: "req" as const, friend: f})),
+        {kind: "back" as const, friend: null as any},
+    ];
+
+    const index = await selectFromList(
+        "Incoming Friend Requests",
+        items,
+        (item, selected) => {
+            const marker = selected ? `${CYAN}>${RESET}` : " ";
+            if (item.kind === "back") return `${marker} ${DIM}Back${RESET}`;
+            return `${marker} ${item.friend.address}`;
+        },
+    );
+
+    if (index === null) return;
+    const chosen = items[index];
+    if (chosen.kind === "back") return;
+
+    const choice = (await prompt("1) Approve  2) Block  3) Cancel: ")).trim();
+    if (choice === "1") {
+        await service.manageConnection(
+            chosen.friend.seed,
+            iqlabs.contract.CONNECTION_STATUS_APPROVED,
+        );
+        logInfo(`Approved ${chosen.friend.address}`);
+    } else if (choice === "2") {
+        await service.manageConnection(
+            chosen.friend.seed,
+            iqlabs.contract.CONNECTION_STATUS_BLOCKED,
+        );
+        logInfo(`Blocked ${chosen.friend.address}`);
+    }
+    await prompt("Press Enter to continue...");
 };
 
 export const openFriendList = async (service: ChatService) => {
@@ -486,6 +560,9 @@ const runDmMenu = async (service: ChatService) => {
             switch (DM_MENU_ITEMS[index].action) {
                 case "friends":
                     await openFriendList(service);
+                    break;
+                case "pending":
+                    await openPendingRequests(service);
                     break;
                 case "request":
                     await requestConnection(service);
