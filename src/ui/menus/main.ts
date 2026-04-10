@@ -3,6 +3,7 @@ import {logError, RESET, BOLD, DIM, CYAN, GREEN, WHITE, YELLOW} from "../../util
 import {prompt, selectFromList} from "../../utils/prompt";
 import {shortenSig} from "../../utils/format";
 import {runChatCommand} from "./chat";
+import {runFileShareMenu} from "./file-share";
 import {runMyMenu} from "./my-menu";
 import {runIqchanMenu} from "./iqchan";
 
@@ -18,6 +19,7 @@ const LOGO = `${BOLD}${CYAN}
 const MENU_ITEMS = [
     {label: "SolChat", action: runChatCommand},
     {label: "IQChan", action: runIqchanMenu},
+    {label: "File Sharing", action: runFileShareMenu},
     {label: "My Menu", action: runMyMenu},
     {label: "Exit", action: null},
 ];

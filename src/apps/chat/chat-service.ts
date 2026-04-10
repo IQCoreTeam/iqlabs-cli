@@ -1,4 +1,4 @@
-import {randomUUID, createHash} from "node:crypto";
+import {createHash} from "node:crypto";
 import {PublicKey, SystemProgram} from "@solana/web3.js";
 import type {Connection, Signer} from "@solana/web3.js";
 import {BorshAccountsCoder} from "@coral-xyz/anchor";
@@ -7,7 +7,9 @@ import iqlabs from "@iqlabs-official/solana-sdk";
 
 import {getWalletCtx} from "../../utils/wallet_manager";
 import {sendInstruction} from "../../utils/tx";
+import {makeMessageId} from "../../utils/id";
 import {logStep, logSuccess, logWarn} from "../../utils/logger";
+import {ensureDbRoot} from "../iqdb-helpers";
 
 const DEFAULT_ROOT_ID = "solchat-root";
 const DM_TABLE_NAME = "dm";
@@ -24,12 +26,6 @@ const MANAGE_CONNECTION_DISC = anchorDisc("manage_connection");
 // In the request_connection / manage_connection instructions, the
 // `connection_table` PDA is the 4th account (index 3 in accountKeyIndexes).
 const CONNECTION_TABLE_IX_INDEX = 3;
-
-const makeMessageId = (sliceLength?: number) => {
-    const uuid = typeof randomUUID === "function" ? randomUUID() : "";
-    const id = uuid || Math.random().toString(36).slice(2, 10);
-    return typeof sliceLength === "number" ? id.slice(0, sliceLength) : id;
-};
 
 export class ChatService {
     readonly connection: Connection;
@@ -55,24 +51,12 @@ export class ChatService {
     }
 
     async ensureRootAndTables() {
-        const dbRoot = iqlabs.contract.getDbRootPda(this.dbRootId, this.programId);
-        const info = await this.connection.getAccountInfo(dbRoot);
-        if (info) {
-            return {dbRoot, created: false};
-        }
-        logStep("Database root not found. Creating on-chain root...");
-        const ix = iqlabs.contract.initializeDbRootInstruction(
-            this.builder,
-            {
-                db_root: dbRoot,
-                signer: this.signer.publicKey,
-                system_program: SystemProgram.programId,
-            },
-            {db_root_id: this.dbRootId},
+        return ensureDbRoot(
+            this.connection,
+            this.signer,
+            this.programId,
+            this.dbRootId,
         );
-        const signature = await sendInstruction(this.connection, this.signer, ix);
-        logSuccess("Database root created!");
-        return {dbRoot, created: true, signature};
     }
 
     async ensureUserState(metadataTxId?: string) {
