@@ -2,7 +2,8 @@ import iqlabs from "@iqlabs-official/solana-sdk";
 import {PublicKey} from "@solana/web3.js";
 
 import {ChatService} from "../../apps/chat/chat-service";
-import {logError, logInfo, logTable, RESET, BOLD, DIM, CYAN, GREEN, WHITE, RED, YELLOW, MAGENTA} from "../../utils/logger";
+import {gwFetchRows} from "../../utils/gateway";
+import {logError, logInfo, RESET, BOLD, DIM, CYAN, GREEN, WHITE, RED, YELLOW, MAGENTA} from "../../utils/logger";
 import {prompt, selectFromList} from "../../utils/prompt";
 
 const SOLCHAT_LOGO = `${BOLD}${CYAN}
@@ -109,9 +110,9 @@ const runDmChat = async (service: ChatService, friend: any) => {
 const runRoomChat = async (service: ChatService, room: any) => {
     console.clear();
     console.log(`[room] ${room.name}`);
-    const history = await iqlabs.reader.readTableRows(room.table, {limit: 20});
+    const history = await gwFetchRows(room.table.toBase58(), 20);
     if (history.length > 0) {
-        logTable(history);
+        console.table(history);
     } else {
         logInfo("No messages yet");
     }

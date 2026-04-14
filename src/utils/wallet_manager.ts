@@ -41,20 +41,7 @@ export const getKeypairInfo = (): { path: string; exists: boolean } => {
     return { path: kpPath, exists: fs.existsSync(kpPath) };
 };
 
-export const getWalletCtx = (mode: "web" | "command" = "command") => {
-    if (mode === "web") {
-        if (typeof require !== "function") {
-            throw new Error("Web mode requires wallet-adapter with bundler support.");
-        }
-        const adapter = require("@solana/wallet-adapter-react") as any;
-        if (!adapter.useConnection || !adapter.useWallet) {
-            throw new Error("wallet-adapter hooks not available.");
-        }
-        const { connection } = adapter.useConnection();
-        const wallet = adapter.useWallet();
-        return { connection, signer: wallet };
-    }
-
+export const getWalletCtx = () => {
     const keypairPath = resolveKeypairPath();
     if (!fs.existsSync(keypairPath)) {
         throw new Error(`Keypair not found: ${keypairPath}`);

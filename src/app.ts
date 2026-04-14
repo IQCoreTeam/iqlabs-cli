@@ -1,15 +1,11 @@
 import "dotenv/config";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import {Connection} from "@solana/web3.js";
 import iqlabs from "@iqlabs-official/solana-sdk";
 
 import {runMainMenu} from "./ui/menus/main";
 import {closeReadline, prompt} from "./utils/prompt";
 import {getKeypairInfo, generateKeypair, getWalletCtx} from "./utils/wallet_manager";
+import {saveEnvVar} from "./utils/config";
 import {RESET, BOLD, DIM, CYAN, GREEN, YELLOW, RED} from "./utils/logger";
-
-const ENV_PATH = path.join(process.cwd(), ".env");
 
 const LOGO = `
 ${CYAN}${BOLD}  ██╗ ██████╗ ██╗      █████╗ ██████╗ ███████╗
@@ -20,21 +16,6 @@ ${CYAN}${BOLD}  ██╗ ██████╗ ██╗      █████�
   ╚═╝ ╚══▀▀═╝ ╚══════╝╚═╝  ╚═╝╚═════╝ ╚══════╝${RESET}
 ${DIM}  Solana Internet CLI${RESET}
 `;
-
-const saveRpcToEnv = (url: string) => {
-    let content = "";
-    if (fs.existsSync(ENV_PATH)) {
-        content = fs.readFileSync(ENV_PATH, "utf8");
-    }
-    const key = "SOLANA_RPC_ENDPOINT";
-    const line = `${key}=${url}`;
-    if (content.includes(key)) {
-        content = content.replace(new RegExp(`^${key}=.*$`, "m"), line);
-    } else {
-        content = content.trimEnd() + (content ? "\n" : "") + line + "\n";
-    }
-    fs.writeFileSync(ENV_PATH, content, "utf8");
-};
 
 const showLogo = () => {
     console.clear();
@@ -75,7 +56,7 @@ const main = async () => {
                 console.log(`\n  ${RED}Invalid URL. Must be a Helius RPC URL.${RESET}`);
                 continue;
             }
-            saveRpcToEnv(url);
+            saveEnvVar("SOLANA_RPC_ENDPOINT", url);
             iqlabs.setRpcUrl(url);
             console.log(`\n  ${GREEN}RPC saved!${RESET}`);
             break;

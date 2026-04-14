@@ -2,7 +2,7 @@ import * as readline from "node:readline";
 
 let rl: readline.Interface | null = null;
 
-export const getReadline = () => {
+const getReadline = () => {
     if (!rl) {
         rl = readline.createInterface({
             input: process.stdin,

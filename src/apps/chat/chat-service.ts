@@ -7,6 +7,7 @@ import iqlabs from "@iqlabs-official/solana-sdk";
 
 import {getWalletCtx} from "../../utils/wallet_manager";
 import {sendInstruction} from "../../utils/tx";
+import {gwFetchRows, gwNotify} from "../../utils/gateway";
 import {makeMessageId} from "../../utils/id";
 import {logStep, logSuccess, logWarn} from "../../utils/logger";
 import {ensureDbRoot} from "../iqdb-helpers";
@@ -163,19 +164,23 @@ export class ChatService {
         if (!trimmed) {
             throw new Error("message is empty");
         }
-        const rowJson = JSON.stringify({
+        const row = {
             id: makeMessageId(),
             text: trimmed,
             sender: handle?.trim() || this.signer.publicKey.toBase58(),
             timestamp: Date.now(),
-        });
-        return iqlabs.writer.writeRow(
+        };
+        const txSignature = await iqlabs.writer.writeRow(
             this.connection,
             this.signer,
             this.dbRootId,
             roomSeed,
-            rowJson,
+            JSON.stringify(row),
         );
+        const dbRoot = iqlabs.contract.getDbRootPda(this.dbRootId, this.programId);
+        const roomPda = iqlabs.contract.getTablePda(dbRoot, Buffer.from(roomSeed), this.programId);
+        await gwNotify(roomPda.toBase58(), txSignature, row, this.signer.publicKey.toBase58());
+        return txSignature;
     }
 
     // Deterministic ed25519 signer from this wallet's secret key.
@@ -304,6 +309,9 @@ export class ChatService {
             dmSeed,
             rowJson,
         );
+        const dbRoot = iqlabs.contract.getDbRootPda(this.dbRootId, this.programId);
+        const connectionTable = iqlabs.contract.getConnectionTablePda(dbRoot, dmSeed, this.programId);
+        await gwNotify(connectionTable.toBase58(), signature, JSON.parse(rowJson), this.signer.publicKey.toBase58());
         return {signature, partnerHasKey: true};
     }
 
@@ -347,7 +355,7 @@ export class ChatService {
             dmSeed,
             this.programId,
         );
-        return iqlabs.reader.readTableRows(connectionTable, options);
+        return gwFetchRows(connectionTable.toBase58(), options.limit, options.before);
     }
 
     // Scan the user's UserState tx history, filter to request_connection /

@@ -1,29 +1,11 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
 import iqlabs from "@iqlabs-official/solana-sdk";
 
 import {ChatService} from "../../apps/chat/chat-service";
 import {getWalletCtx} from "../../utils/wallet_manager";
+import {saveEnvVar, getGatewayUrl, setGatewayUrl} from "../../utils/config";
 import {logError, logInfo, logWarn, RESET, BOLD, DIM, CYAN, GREEN, WHITE} from "../../utils/logger";
 import {prompt, selectFromList} from "../../utils/prompt";
 import {openFriendList} from "./chat";
-
-const ENV_PATH = path.join(process.cwd(), ".env");
-
-const saveRpcToEnv = (url: string) => {
-    let content = "";
-    if (fs.existsSync(ENV_PATH)) {
-        content = fs.readFileSync(ENV_PATH, "utf8");
-    }
-    const key = "SOLANA_RPC_ENDPOINT";
-    const line = `${key}=${url}`;
-    if (content.includes(key)) {
-        content = content.replace(new RegExp(`^${key}=.*$`, "m"), line);
-    } else {
-        content = content.trimEnd() + (content ? "\n" : "") + line + "\n";
-    }
-    fs.writeFileSync(ENV_PATH, content, "utf8");
-};
 
 const rpcSettings = async () => {
     const current = iqlabs.getRpcUrl();
@@ -33,8 +15,26 @@ const rpcSettings = async () => {
     const newUrl = (await prompt("> ")).trim();
     if (newUrl) {
         iqlabs.setRpcUrl(newUrl);
-        saveRpcToEnv(newUrl);
+        saveEnvVar("SOLANA_RPC_ENDPOINT", newUrl);
         logInfo(`RPC updated and saved: ${newUrl}`);
+    }
+    await prompt("Press Enter to continue...");
+};
+
+const gatewaySettings = async () => {
+    const current = getGatewayUrl() || "(none — using direct RPC)";
+    logInfo(`Current Gateway: ${current}`);
+    console.log("");
+    console.log("Paste gateway URL (empty to clear, keeps RPC fallback):");
+    const newUrl = (await prompt("> ")).trim();
+    if (newUrl) {
+        setGatewayUrl(newUrl);
+        saveEnvVar("GATEWAY_URL", newUrl);
+        logInfo(`Gateway set: ${newUrl}`);
+    } else {
+        setGatewayUrl("");
+        saveEnvVar("GATEWAY_URL", "");
+        logInfo("Gateway cleared — using direct RPC");
     }
     await prompt("Press Enter to continue...");
 };
@@ -151,6 +151,7 @@ const dmInbox = async () => {
 
 const MY_MENU_ITEMS = [
     {label: "RPC Settings", action: rpcSettings},
+    {label: "Gateway Settings", action: gatewaySettings},
     {label: "My Profile", action: showProfile},
     {label: "My Inventory", action: showInventory},
     {label: "DM Inbox", action: dmInbox},

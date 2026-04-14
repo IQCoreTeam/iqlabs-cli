@@ -2,7 +2,8 @@ import {IqchanService} from "../../apps/iqchan/iqchan-service";
 import type {Post, ThreadEntry} from "../../apps/iqchan/constants";
 import {logError, logInfo, RESET, BOLD, DIM, CYAN, GREEN, YELLOW, MAGENTA, WHITE, RED} from "../../utils/logger";
 import {prompt, selectFromList, closeReadline} from "../../utils/prompt";
-import {formatDate, timeAgo, truncate, shortenSig} from "../../utils/format";
+import {formatDate, timeAgo, truncate} from "../../utils/format";
+import {utils} from "@iqlabs-official/solana-sdk";
 
 const PAGE_SIZE = 20;
 
@@ -24,28 +25,13 @@ function renderThreadPreview(entry: ThreadEntry, selected: boolean): string {
         return `${DIM}    Thread ${uuid}  /${board}/${RESET}\n`;
     }
 
-    const sub = op.sub ? op.sub : "(no subject)";
-    const preview = truncate(op.com ?? "", 60);
-    const meta = `${op.name} ${DIM}${timeAgo(op.time)} ${entry.replyCount}R${RESET}`;
+    const sig = op.__txSignature ? utils.shortenSig(op.__txSignature) : "???";
+    const sub = op.sub ? `${op.sub} ` : "";
 
     if (selected) {
-        const lines = [`${BOLD}${CYAN}  > ${WHITE}${sub} ${RESET}${DIM}[${meta}]${RESET}`];
-        if (preview) lines.push(`${CYAN}    │ ${RESET}${preview}`);
-        if (entry.lastReplies.length > 0) {
-            entry.lastReplies.forEach((reply, i) => {
-                const isLast = i === entry.lastReplies.length - 1;
-                const branch = isLast ? "└─" : "├─";
-                const text = truncate(reply.com ?? "", 50);
-                lines.push(`${CYAN}    ${branch}${RESET} ${DIM}${reply.name}:${RESET} ${text}`);
-            });
-        }
-        lines.push("");
-        return lines.join("\n");
+        return `${BOLD}${CYAN}  > ${WHITE}${sub}${RESET}${DIM}${sig} ${entry.replyCount}R${RESET}\n`;
     }
-
-    const lines = [`${DIM}    ${sub} [${meta}]${RESET}`];
-    lines.push("");
-    return lines.join("\n");
+    return `${DIM}    ${sub}${sig} ${entry.replyCount}R${RESET}\n`;
 }
 
 function renderPost(
@@ -54,7 +40,7 @@ function renderPost(
     total: number,
     isOp: boolean,
 ): string[] {
-    const sig = post.__txSignature ? shortenSig(post.__txSignature) : "???";
+    const sig = post.__txSignature ? utils.shortenSig(post.__txSignature) : "???";
     const lines: string[] = [];
 
     if (isOp) {
@@ -106,7 +92,7 @@ async function createThreadFlow(service: IqchanService, boardId: string) {
         await service.ensureWriteReady();
         const result = await service.createThread(boardId, {sub, com, name, img});
         logInfo("Posting... (2/2 writing post)");
-        logInfo(`Thread created! sig: ${shortenSig(result.txSignature)}`);
+        logInfo(`Thread created! https://solscan.io/tx/${result.txSignature}`);
     } catch (err) {
         logError("Failed to create thread", err);
     }
@@ -135,7 +121,7 @@ async function replyFlow(
     try {
         await service.ensureWriteReady();
         const sig = await service.postReply(threadSeed, threadPda, boardId, {com, name, img}, replyCount);
-        logInfo(`Reply posted! sig: ${shortenSig(sig)}`);
+        logInfo(`Reply posted! https://solscan.io/tx/${sig}`);
     } catch (err) {
         logError("Failed to post reply", err);
     }
@@ -152,68 +138,46 @@ async function showThread(
     boardId: string,
 ) {
     const threadSeed = entry.threadSeed ?? "";
+    const op = entry.opData;
+    const replies: Post[] = [];
 
-    // 1. Fetch all signatures at once (1 RPC)
-    console.clear();
-    logInfo("Fetching tx list...");
-    let allSigs: string[];
-    try {
-        allSigs = await service.fetchThreadSignatures(entry.threadPda);
-    } catch (err) {
-        logError("Failed to fetch thread", err);
-        await prompt("Press Enter to go back...");
-        return;
-    }
-
-    if (allSigs.length === 0) {
-        logInfo("Empty thread");
-        await prompt("Press Enter to go back...");
-        return;
-    }
-
-    // Reverse so newest first in the sig list; we'll load newest first
-    allSigs.reverse();
-
-    // 2. Load posts incrementally
-    const loaded: Post[] = [];
-    let cursor = 0;
-
-    const loadBatch = async () => {
-        const batch = allSigs.slice(cursor, cursor + BATCH_SIZE);
-        for (const sig of batch) {
-            process.stdout.write(`\r  Fetching... ${loaded.length + 1}/${allSigs.length}`);
-            const post = await service.readSinglePost(sig);
-            if (post) loaded.push(post);
-            cursor++;
-            await new Promise(r => setTimeout(r, 1000));
+    const loadReplies = async (): Promise<boolean> => {
+        try {
+            const {replies: loaded} = await service.readThread(entry.threadPda, threadSeed, boardId);
+            replies.length = 0;
+            replies.push(...loaded);
+            return true;
+        } catch (err) {
+            logError("Failed to load replies", err);
+            return false;
         }
-        console.log("");
     };
 
-    // Initial load: newest 5
-    await loadBatch();
+    console.clear();
+    logInfo("Loading replies...");
+    if (!(await loadReplies())) {
+        await prompt("Press Enter to go back...");
+        return;
+    }
 
     const render = () => {
         console.clear();
-        const op = loaded.find(p => !!p.threadSeed);
         const subject = op?.sub ?? "(no subject)";
         console.log(`  ${BOLD}${CYAN}/${boardId}/${RESET} ${BOLD}${WHITE}${subject}${RESET}`);
         console.log(`  ${DIM}${"─".repeat(70)}${RESET}`);
         console.log("");
 
         if (op) {
-            const opLines = renderPost(op, 0, loaded.length - 1, true);
+            const opLines = renderPost(op, 0, replies.length, true);
             for (const line of opLines) console.log(line);
         }
 
-        const replies = loaded.filter(p => p !== op).sort((a, b) => a.time - b.time);
         replies.forEach((reply, i) => {
             const lines = renderPost(reply, i + 1, replies.length, false);
             for (const line of lines) console.log(line);
         });
 
-        const remaining = allSigs.length - cursor;
-        console.log(`  ${DIM}Loaded ${loaded.length}/${allSigs.length} posts${RESET}`);
+        console.log(`  ${DIM}${replies.length} replies${RESET}`);
         console.log(`  ${DIM}${"─".repeat(70)}${RESET}`);
     };
 
@@ -222,8 +186,6 @@ async function showThread(
 
     const rebuildActions = () => {
         actions.length = 0;
-        const remaining = allSigs.length - cursor;
-        if (remaining > 0) actions.push({label: `Load More (${remaining})`, id: "more"});
         actions.push({label: "Reply", id: "reply"});
         actions.push({label: "Back", id: "back"});
     };
@@ -281,13 +243,6 @@ async function showThread(
 
         if (action === "back") break;
 
-        if (action === "more") {
-            if (cursor >= allSigs.length) continue;
-            console.log("");
-            await loadBatch();
-            continue;
-        }
-
         if (action === "reply") {
             console.log("");
             await replyFlow(
@@ -295,9 +250,10 @@ async function showThread(
                 threadSeed,
                 entry.threadPda,
                 boardId,
-                loaded.length,
-                loaded.find(p => !!p.threadSeed)?.sub,
+                replies.length,
+                op?.sub,
             );
+            await loadReplies();
             continue;
         }
     }
@@ -314,7 +270,8 @@ async function showBoardThreads(
         console.log(`/${board.id}/ - ${board.title}`);
         console.log(`${"─".repeat(75)}`);
 
-        const threads = service.listBoardThreads(board.id);
+        logInfo("Loading threads...");
+        const threads = await service.fetchFeedThreads(board.id);
 
         if (threads.length === 0) {
             logInfo("No threads yet");

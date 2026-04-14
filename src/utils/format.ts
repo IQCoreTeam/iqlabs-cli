@@ -25,7 +25,3 @@ export function truncate(text: string, maxLen: number): string {
     return text.slice(0, maxLen - 3) + "...";
 }
 
-export function shortenSig(sig: string, len = 4): string {
-    if (sig.length <= len * 2 + 3) return sig;
-    return `${sig.slice(0, len)}...${sig.slice(-len)}`;
-}

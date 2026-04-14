@@ -5,6 +5,7 @@ import iqlabs from "@iqlabs-official/solana-sdk";
 
 import {getWalletCtx} from "../../utils/wallet_manager";
 import {sendInstruction} from "../../utils/tx";
+import {gwFetchRows, gwNotify} from "../../utils/gateway";
 import {logStep, logSuccess, logWarn} from "../../utils/logger";
 import {
     DB_ROOT_ID,
@@ -193,9 +194,7 @@ export class IqchanService {
 
     async fetchFeedThreads(boardId: string): Promise<ThreadEntry[]> {
         const feedPda = this.getFeedPda(boardId);
-        const feedRows = await iqlabs.reader.readTableRows(feedPda, {
-            limit: THREADS_PER_PAGE * 3,
-        });
+        const feedRows = await gwFetchRows(feedPda.toBase58(), THREADS_PER_PAGE * 3);
 
         const threads = new Map<string, ThreadEntry>();
 
@@ -230,9 +229,7 @@ export class IqchanService {
         await Promise.all(
             [...threads.values()].map(async (entry) => {
                 try {
-                    const rows = await iqlabs.reader.readTableRows(entry.threadPda, {
-                        limit: 50,
-                    });
+                    const rows = await gwFetchRows(entry.threadPda, 50);
 
                     const opFromRows = (rows as unknown as Post[])
                         .filter((r) => !!r.threadSeed)
@@ -268,15 +265,14 @@ export class IqchanService {
         threadSeed: string,
         boardId?: string,
     ): Promise<{ op: Post | null; replies: Post[] }> {
-        const rows = await iqlabs.reader.readTableRows(threadPda);
-        const posts = rows as unknown as Post[];
+        const rows = await gwFetchRows(threadPda);
 
         // Try to get OP from feed if boardId is provided
         let feedOp: Post | undefined;
         if (boardId) {
             try {
                 const feedPda = this.getFeedPda(boardId);
-                const feedRows = await iqlabs.reader.readTableRows(feedPda, {limit: 100});
+                const feedRows = await gwFetchRows(feedPda.toBase58(), 100);
                 feedOp = (feedRows as unknown as Post[]).find(
                     (r) => r.threadPda === threadPda && !!r.threadSeed,
                 );
@@ -292,7 +288,7 @@ export class IqchanService {
 
         let instrRows: Record<string, unknown>[] = [];
         try {
-            instrRows = await iqlabs.reader.readTableRows(instrTable);
+            instrRows = await gwFetchRows(instrTable.toBase58());
         } catch {
             // no instructions yet
         }
@@ -380,6 +376,7 @@ export class IqchanService {
             threadSeed: seed,
         };
 
+        const boardPda = iqlabs.contract.getTablePda(dbRoot, boardSeedBytes, this.programId);
         const txSignature = await iqlabs.writer.writeRow(
             this.connection,
             this.signer,
@@ -389,6 +386,12 @@ export class IqchanService {
             false,
             [feedPda],
         );
+
+        const signerBase58 = this.signer.publicKey.toBase58();
+        await Promise.all([
+            gwNotify(boardPda.toBase58(), txSignature, row, signerBase58),
+            gwNotify(feedPda.toBase58(), txSignature, row, signerBase58),
+        ]);
 
         return {threadSeed: seed, txSignature};
     }
@@ -414,7 +417,7 @@ export class IqchanService {
             threadSeed,
         };
 
-        return iqlabs.writer.writeRow(
+        const txSignature = await iqlabs.writer.writeRow(
             this.connection,
             this.signer,
             this.dbRootId,
@@ -423,24 +426,38 @@ export class IqchanService {
             false,
             remaining,
         );
+
+        const signerBase58 = this.signer.publicKey.toBase58();
+        const notifyTargets = [gwNotify(threadPda, txSignature, row, signerBase58)];
+        if (shouldBump) {
+            notifyTargets.push(gwNotify(this.getFeedPda(boardId).toBase58(), txSignature, row, signerBase58));
+        }
+        await Promise.all(notifyTargets);
+
+        return txSignature;
     }
 
     async editPost(threadSeed: string, targetTxSig: string, newCom: string): Promise<string> {
         const seedBytes = Buffer.from(iqlabs.utils.toSeedBytes(threadSeed));
-        return iqlabs.writer.manageRowData(
+        const row = {target: targetTxSig, com: newCom};
+        const txSignature = await iqlabs.writer.manageRowData(
             this.connection,
             this.signer,
             this.dbRootId,
             seedBytes,
-            JSON.stringify({target: targetTxSig, com: newCom}),
+            JSON.stringify(row),
             threadSeed,
             targetTxSig,
         );
+        const dbRoot = iqlabs.contract.getDbRootPda(this.dbRootId, this.programId);
+        const instrTable = iqlabs.contract.getInstructionTablePda(dbRoot, seedBytes, this.programId);
+        await gwNotify(instrTable.toBase58(), txSignature, row, this.signer.publicKey.toBase58());
+        return txSignature;
     }
 
     async deletePost(threadSeed: string, targetTxSig: string): Promise<string> {
         const seedBytes = Buffer.from(iqlabs.utils.toSeedBytes(threadSeed));
-        return iqlabs.writer.manageRowData(
+        const txSignature = await iqlabs.writer.manageRowData(
             this.connection,
             this.signer,
             this.dbRootId,
@@ -449,5 +466,9 @@ export class IqchanService {
             threadSeed,
             targetTxSig,
         );
+        const dbRoot = iqlabs.contract.getDbRootPda(this.dbRootId, this.programId);
+        const instrTable = iqlabs.contract.getInstructionTablePda(dbRoot, seedBytes, this.programId);
+        await gwNotify(instrTable.toBase58(), txSignature, {target: targetTxSig}, this.signer.publicKey.toBase58());
+        return txSignature;
     }
 }

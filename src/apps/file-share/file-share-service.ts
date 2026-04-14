@@ -6,6 +6,7 @@ import {BorshAccountsCoder} from "@coral-xyz/anchor";
 import iqlabs from "@iqlabs-official/solana-sdk";
 
 import {getWalletCtx} from "../../utils/wallet_manager";
+import {gwFetchRows, gwNotify} from "../../utils/gateway";
 import {makeMessageId} from "../../utils/id";
 import {ensureDbRoot} from "../iqdb-helpers";
 
@@ -250,7 +251,7 @@ export class FileShareService {
     async listPlazaFiles(folderSeed: Uint8Array): Promise<PlazaFile[]> {
         const dbRoot = iqlabs.contract.getDbRootPda(PLAZA_DB_ROOT_BYTES, this.programId);
         const table = iqlabs.contract.getTablePda(dbRoot, folderSeed, this.programId);
-        const rows = await iqlabs.reader.readTableRows(table, {limit: 100});
+        const rows = await gwFetchRows(table.toBase58(), 100);
 
         const out: PlazaFile[] = [];
         for (const raw of rows) {
@@ -276,20 +277,24 @@ export class FileShareService {
         folderSeed: Uint8Array,
         file: {name: string; ext: string; sig: string},
     ): Promise<string> {
-        const rowJson = JSON.stringify({
+        const row = {
             id: makeMessageId(12),
             name: file.name,
             ext: file.ext,
             sig: file.sig,
             uploader: this.signer.publicKey.toBase58(),
             timestamp: Date.now(),
-        });
-        return iqlabs.writer.writeRow(
+        };
+        const txSignature = await iqlabs.writer.writeRow(
             this.connection,
             this.signer,
             PLAZA_DB_ROOT_BYTES,
             folderSeed,
-            rowJson,
+            JSON.stringify(row),
         );
+        const dbRoot = iqlabs.contract.getDbRootPda(PLAZA_DB_ROOT_BYTES, this.programId);
+        const table = iqlabs.contract.getTablePda(dbRoot, folderSeed, this.programId);
+        await gwNotify(table.toBase58(), txSignature, row, this.signer.publicKey.toBase58());
+        return txSignature;
     }
 }
