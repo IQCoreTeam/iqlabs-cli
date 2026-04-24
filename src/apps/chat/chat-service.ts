@@ -49,6 +49,11 @@ export class ChatService {
     async setupCliDemo() {
         await this.ensureRootAndTables();
         await this.ensureUserState();
+        try {
+            await this.ensureMyDhKey();
+        } catch (err) {
+            logWarn("Failed to register IQ encryption key (non-fatal)", err);
+        }
     }
 
     async ensureRootAndTables() {
