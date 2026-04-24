@@ -62,22 +62,30 @@ const runDmChat = async (service: ChatService, friend: any) => {
     console.log(`${GREEN}Messages are end-to-end encrypted. Only you and ${friend.address} can read them.${RESET}`);
     console.log();
 
+    const renderDmRow = async (row: any) => {
+        const data = typeof row === "string" ? (() => { try { return JSON.parse(row); } catch { return {text: row}; } })() : row;
+        const decoded = await service.tryDecryptDmRow(data);
+        const sender = data.sender ?? "?";
+        const isMe = sender === service.signer.publicKey.toBase58();
+        const color = isMe ? CYAN : MAGENTA;
+        const lock = decoded.encrypted ? (decoded.decrypted ? `${GREEN}[enc]${RESET}` : `${RED}[enc?]${RESET}`) : "";
+        console.log(`  ${color}${sender.slice(0, 8)}${RESET} ${lock} ${decoded.text}`);
+    };
+
     const history = await service.fetchDmHistory(friend.seed, {limit: 20});
     if (history.length > 0) {
-        for (const msg of history) {
-            const data = typeof msg === "string" ? (() => { try { return JSON.parse(msg); } catch { return {text: msg}; } })() : msg;
-            const decoded = await service.tryDecryptDmRow(data);
-            const sender = data.sender ?? "?";
-            const isMe = sender === service.signer.publicKey.toBase58();
-            const color = isMe ? CYAN : MAGENTA;
-            const lock = decoded.encrypted ? (decoded.decrypted ? `${GREEN}[enc]${RESET}` : `${RED}[enc?]${RESET}`) : "";
-            console.log(`  ${color}${sender.slice(0, 8)}${RESET} ${lock} ${decoded.text}`);
+        // Gateway returns newest-first; flip so oldest appears at the top.
+        for (const msg of [...history].reverse()) {
+            await renderDmRow(msg);
         }
     } else {
         logInfo("No messages yet");
     }
 
-    const stop = await service.joinDm(friend.seed, {limit: 20});
+    const stop = await service.joinDm(friend.seed, {
+        limit: 20,
+        onRow: (row) => renderDmRow(row),
+    });
     logInfo("Type message, /block, or /exit");
     try {
         while (true) {
@@ -112,7 +120,8 @@ const runRoomChat = async (service: ChatService, room: any) => {
     console.log(`[room] ${room.name}`);
     const history = await gwFetchRows(room.table.toBase58(), 20);
     if (history.length > 0) {
-        console.table(history);
+        // Oldest at top so the most recent messages are right above the prompt.
+        console.table([...history].reverse());
     } else {
         logInfo("No messages yet");
     }
@@ -484,7 +493,7 @@ const spyOnDm = async (service: ChatService) => {
         const history = await service.fetchDmHistory(dmSeed, {limit: 30});
         if (history.length > 0) {
             console.log(`${YELLOW}--- INTERCEPTED: ${history.length} messages exposed ---${RESET}`);
-            for (const msg of history) {
+            for (const msg of [...history].reverse()) {
                 const data = typeof msg === "string" ? (() => { try { return JSON.parse(msg); } catch { return {text: msg}; } })() : msg;
                 renderSpyRow(data);
             }

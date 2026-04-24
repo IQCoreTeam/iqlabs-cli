@@ -205,67 +205,63 @@ export class ChatService {
         return {privKey, pubKey, pubHex: crypto.bytesToHex(pubKey)};
     }
 
-    async registerMyDhKey(): Promise<string> {
-        const {pubHex} = await this.deriveMyDhKeypair();
-        const payload = JSON.stringify({t: "iq-locker-key-v1", k: pubHex});
-        return iqlabs.writer.codeIn(
-            {connection: this.connection, signer: this.signer},
-            payload,
-            "locker-key.json",
-            0,
-            "application/json",
-        );
+    // Reads the user's profile JSON stored behind UserInventory.metadata
+    // (codeIn tx pointer). Returns an empty object if nothing is published yet.
+    private async readProfileJson(walletAddress: string): Promise<Record<string, unknown>> {
+        try {
+            const state = await iqlabs.reader.readUserState(walletAddress);
+            if (!state?.profileData) return {};
+            const parsed = JSON.parse(state.profileData);
+            return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+        } catch {
+            return {};
+        }
     }
 
-    // Idempotent: if our DH key is already on-chain, return it without
-    // spending any SOL. Otherwise derive + register it once and cache.
+    // Idempotent: if our encryption pubkey is already in the profile JSON,
+    // return it. Otherwise derive + merge + publish (codeIn + updateUserMetadata).
     async ensureMyDhKey(): Promise<{ pubHex: string; created: boolean; signature?: string }> {
         const myAddress = this.signer.publicKey.toBase58();
         const cached = ChatService._dhKeyCache.get(myAddress);
         if (cached) return {pubHex: cached, created: false};
 
-        const me = await this.deriveMyDhKeypair();
-        const existing = await this.lookupDhKey(myAddress);
-        if (existing === me.pubHex) {
-            ChatService._dhKeyCache.set(myAddress, me.pubHex);
-            return {pubHex: me.pubHex, created: false};
+        const existingProfile = await this.readProfileJson(myAddress);
+        const existingKey = typeof existingProfile.encryptionPubKey === "string"
+            ? (existingProfile.encryptionPubKey as string)
+            : null;
+        if (existingKey) {
+            ChatService._dhKeyCache.set(myAddress, existingKey);
+            return {pubHex: existingKey, created: false};
         }
 
-        const signature = await this.registerMyDhKey();
+        const me = await this.deriveMyDhKeypair();
+        const mergedProfile = {...existingProfile, encryptionPubKey: me.pubHex};
+        const txId = await iqlabs.writer.codeIn(
+            {connection: this.connection, signer: this.signer},
+            [JSON.stringify(mergedProfile)],
+            "profile-metadata",
+            0,
+        );
+        if (!txId) throw new Error("codeIn returned no txId");
+        await this.updateUserMetadata(txId);
         ChatService._dhKeyCache.set(myAddress, me.pubHex);
-        return {pubHex: me.pubHex, created: true, signature};
+        return {pubHex: me.pubHex, created: true, signature: txId};
     }
 
     // Module-level cache so repeat DM opens don't re-check the chain.
     private static _dhKeyCache = new Map<string, string>();
 
-    // Scan a user's inventory code_in transactions to find their locker-key.json.
-    // Returns the hex X25519 public key, or null if not registered.
+    // Reads a peer's encryption pubkey from their profile JSON.
+    // Two RPC max: getAccountInfo(user PDA) + readCodeIn(pointer).
     async lookupDhKey(walletAddress: string): Promise<string | null> {
-        try {
-            const pubkey = new PublicKey(walletAddress);
-            const inventoryPda = iqlabs.contract.getUserInventoryPda(pubkey, this.programId);
-            const signatures = await this.connection.getSignaturesForAddress(inventoryPda, {limit: 100});
-            for (const sig of signatures) {
-                try {
-                    const result = await iqlabs.reader.readCodeIn(sig.signature);
-                    if (!result?.data) continue;
-                    const meta = typeof result.metadata === "string"
-                        ? JSON.parse(result.metadata)
-                        : result.metadata;
-                    if (meta?.filename !== "locker-key.json") continue;
-                    const parsed = JSON.parse(result.data);
-                    if (parsed?.t === "iq-locker-key-v1" && typeof parsed.k === "string") {
-                        return parsed.k;
-                    }
-                } catch {
-                    continue;
-                }
-            }
-        } catch {
-            return null;
-        }
-        return null;
+        const cached = ChatService._dhKeyCache.get(walletAddress);
+        if (cached) return cached;
+        const profile = await this.readProfileJson(walletAddress);
+        const key = typeof profile.encryptionPubKey === "string"
+            ? (profile.encryptionPubKey as string)
+            : null;
+        if (key) ChatService._dhKeyCache.set(walletAddress, key);
+        return key;
     }
 
     async sendEncryptedDm(
@@ -549,9 +545,15 @@ export class ChatService {
         return {created: true, signature};
     }
 
-    async subscribeToAccount(account: PublicKey, options: { limit?: number } = {}) {
+    async subscribeToAccount(
+        account: PublicKey,
+        options: { limit?: number; onRow?: (row: Record<string, unknown>, signature: string) => void | Promise<void> } = {},
+    ) {
         const limit =
             typeof options.limit === "number" && options.limit > 0 ? options.limit : 10;
+        const onRow = options.onRow ?? ((row, signature) => {
+            console.log({...row, __txSignature: signature});
+        });
         const seen = new Set<string>();
         const latest = await this.connection.getSignaturesForAddress(account, {limit});
         for (const sig of latest) {
@@ -584,23 +586,19 @@ export class ChatService {
                     }
                     const {data, metadata} = result;
                     if (!data) {
-                        console.log({
-                            signature: sig.signature,
-                            metadata,
-                            data: null,
-                        });
+                        await onRow({metadata, data: null}, sig.signature);
                         continue;
                     }
                     try {
                         const parsed = JSON.parse(data);
                         if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-                            console.log({...parsed, __txSignature: sig.signature});
+                            await onRow(parsed as Record<string, unknown>, sig.signature);
                             continue;
                         }
                     } catch {
                         // fallthrough
                     }
-                    console.log({signature: sig.signature, metadata, data});
+                    await onRow({metadata, data}, sig.signature);
                 }
             },
             "confirmed",
@@ -615,7 +613,10 @@ export class ChatService {
         return this.subscribeToAccount(table, options);
     }
 
-    async joinDm(dmSeed: Uint8Array, options: { limit?: number } = {}) {
+    async joinDm(
+        dmSeed: Uint8Array,
+        options: { limit?: number; onRow?: (row: Record<string, unknown>, signature: string) => void | Promise<void> } = {},
+    ) {
         const dbRoot = iqlabs.contract.getDbRootPda(this.dbRootId, this.programId);
         const connectionTable = iqlabs.contract.getConnectionTablePda(
             dbRoot,
