@@ -3,7 +3,12 @@ import iqlabs from "@iqlabs-official/solana-sdk";
 
 import {runMainMenu} from "./ui/menus/main";
 import {closeReadline, prompt} from "./utils/prompt";
-import {getKeypairInfo, generateKeypair, getWalletCtx} from "./utils/wallet_manager";
+import {
+    getKeypairInfo, 
+    generateKeypair, 
+    getWalletCtx,
+    validateKeypairPath,
+} from "./utils/wallet_manager";
 import {saveEnvVar} from "./utils/config";
 import {RESET, BOLD, DIM, CYAN, GREEN, YELLOW, RED} from "./utils/logger";
 
@@ -22,19 +27,62 @@ const showLogo = () => {
     console.log(LOGO);
 };
 
-const main = async () => {
-    // 1. Ensure keypair
-    const {path: kpPath, exists} = getKeypairInfo();
-    if (!exists) {
-        const result = generateKeypair();
-        showLogo();
-        console.log(`  ${GREEN}Wallet created!${RESET}`);
-        console.log(`  ${DIM}Saved to: ${result.path}${RESET}`);
-        console.log(`  ${DIM}Public key: ${GREEN}${result.keypair.publicKey.toBase58()}${RESET}`);
-        console.log("");
+const ensureWallet = async () => {
+    const info = getKeypairInfo();
+
+    if (info.exists) {
+        try {
+            validateKeypairPath(info.path);
+            return;
+        } catch {
+            // Existing wallet path is present, but the file is not a valid keypair.
+        }
     }
 
-    // 2. Check RPC
+    showLogo();
+    console.log(`  ${YELLOW}Wallet not configured.${RESET}`);
+    console.log(`  ${DIM}Paste a Solana keypair JSON path below.${RESET}`);
+    console.log(`  ${DIM}Leave empty to generate a new wallet.${RESET}`);
+    console.log("");
+
+    while (true) {
+        const walletPath = (await prompt("  > ")).trim();
+
+        if (!walletPath) {
+            const result = generateKeypair();
+
+            saveEnvVar("SOLANA_KEYPAIR_PATH", result.path);
+            process.env.SOLANA_KEYPAIR_PATH = result.path;
+
+            console.log(`\n  ${GREEN}Wallet created!${RESET}`);
+            console.log(`  ${DIM}Saved to: ${result.path}${RESET}`);
+            console.log(`  ${DIM}Public key: ${GREEN}${result.keypair.publicKey.toBase58()}${RESET}`);
+            console.log("");
+            return;
+        }
+
+        try {
+            const signer = validateKeypairPath(walletPath);
+
+            saveEnvVar("SOLANA_KEYPAIR_PATH", walletPath);
+            process.env.SOLANA_KEYPAIR_PATH = walletPath;
+
+            console.log(`\n  ${GREEN}Wallet saved!${RESET}`);
+            console.log(`  ${DIM}Path: ${walletPath}${RESET}`);
+            console.log(`  ${DIM}Public key: ${GREEN}${signer.publicKey.toBase58()}${RESET}`);
+            console.log("");
+            return;
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.log(`\n  ${RED}Invalid wallet path: ${msg}${RESET}`);
+            console.log(`  ${DIM}Try again, or leave empty to generate a new wallet.${RESET}`);
+        }
+    }
+};
+
+const main = async () => {
+
+    // 1. Check RPC
     const rpcUrl = process.env.SOLANA_RPC_ENDPOINT;
     if (!rpcUrl || !rpcUrl.startsWith("https://mainnet.helius-rpc.com/?ap")) {
         showLogo();
@@ -64,6 +112,9 @@ const main = async () => {
     } else {
         iqlabs.setRpcUrl(rpcUrl);
     }
+
+    // 2. Ensure wallet
+    await ensureWallet();
 
     // 3. Check SOL balance
     const {connection, signer} = getWalletCtx();

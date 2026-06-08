@@ -1,7 +1,7 @@
 import iqlabs from "@iqlabs-official/solana-sdk";
 
 import {ChatService} from "../../apps/chat/chat-service";
-import {getWalletCtx} from "../../utils/wallet_manager";
+import {getWalletCtx, getKeypairInfo, validateKeypairPath} from "../../utils/wallet_manager";
 import {saveEnvVar, getGatewayUrl, setGatewayUrl} from "../../utils/config";
 import {logError, logInfo, logWarn, RESET, BOLD, DIM, CYAN, GREEN, WHITE} from "../../utils/logger";
 import {prompt, selectFromList} from "../../utils/prompt";
@@ -36,6 +36,48 @@ const gatewaySettings = async () => {
         saveEnvVar("GATEWAY_URL", "");
         logInfo("Gateway cleared — using direct RPC");
     }
+    await prompt("Press Enter to continue...");
+};
+
+const walletSettings = async () => {
+    const info = getKeypairInfo();
+
+    logInfo(`Current wallet path: ${info.path}`);
+    logInfo(`Source: ${info.source}`);
+    logInfo(`Exists: ${info.exists ? "yes" : "no"}`);
+
+    if (info.exists) {
+        try {
+            const signer = validateKeypairPath(info.path);
+            logInfo(`Public key: ${signer.publicKey.toBase58()}`);
+        } catch {
+            logWarn("Current wallet file exists, but is not a valid Solana keypair");
+        }
+    }
+
+    console.log("");
+    console.log("Paste a Solana keypair JSON path below.");
+    console.log("Leave empty to keep the current wallet.");
+    const newPath = (await prompt("> ")).trim();
+
+    if (!newPath) {
+        logInfo("Wallet unchanged");
+        await prompt("Press Enter to continue...");
+        return;
+    }
+
+    try {
+        const signer = validateKeypairPath(newPath);
+        saveEnvVar("SOLANA_KEYPAIR_PATH", newPath);
+
+        logInfo(`Wallet path saved: ${newPath}`);
+        logInfo(`Public key: ${signer.publicKey.toBase58()}`);
+        logWarn("Restart the CLI for the wallet change to fully apply.");
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logError("Invalid wallet path", msg);
+    }
+
     await prompt("Press Enter to continue...");
 };
 
@@ -152,6 +194,7 @@ const dmInbox = async () => {
 const MY_MENU_ITEMS = [
     {label: "RPC Settings", action: rpcSettings},
     {label: "Gateway Settings", action: gatewaySettings},
+    {label: "Wallet Settings", action: walletSettings},
     {label: "My Profile", action: showProfile},
     {label: "My Inventory", action: showInventory},
     {label: "DM Inbox", action: dmInbox},

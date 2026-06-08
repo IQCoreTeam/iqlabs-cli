@@ -9,12 +9,32 @@ const DEFAULT_RPC_ENDPOINT =
 const DEFAULT_KEYPAIR_DIR = path.join(os.homedir(), ".config", "solana");
 const DEFAULT_KEYPAIR_PATH = path.join(DEFAULT_KEYPAIR_DIR, "id.json");
 
-const resolveKeypairPath = (): string => {
+const resolveKeypairInfo = (): KeypairInfo => {
+    if (process.env.SOLANA_KEYPAIR_PATH) {
+        return {
+            path: process.env.SOLANA_KEYPAIR_PATH,
+            exists: fs.existsSync(process.env.SOLANA_KEYPAIR_PATH),
+            source: "env",
+        };
+    }
+
     const localKeypair = path.join(process.cwd(), "keypair.json");
-    if (fs.existsSync(localKeypair)) return localKeypair;
-    if (process.env.SOLANA_KEYPAIR_PATH) return process.env.SOLANA_KEYPAIR_PATH;
-    return DEFAULT_KEYPAIR_PATH;
+    if (fs.existsSync(localKeypair)) {
+        return {
+            path: localKeypair,
+            exists: true,
+            source: "local",
+        };
+    }
+
+    return {
+        path: DEFAULT_KEYPAIR_PATH,
+        exists: fs.existsSync(DEFAULT_KEYPAIR_PATH),
+        source: "default",
+    };
 };
+
+const resolveKeypairPath = (): string => resolveKeypairInfo().path;
 
 const loadKeypair = (keypairPath: string): Keypair => {
     const raw = fs.readFileSync(keypairPath, "utf8");
@@ -36,9 +56,8 @@ export const generateKeypair = (): { keypair: Keypair; path: string } => {
     return { keypair, path: DEFAULT_KEYPAIR_PATH };
 };
 
-export const getKeypairInfo = (): { path: string; exists: boolean } => {
-    const kpPath = resolveKeypairPath();
-    return { path: kpPath, exists: fs.existsSync(kpPath) };
+export const getKeypairInfo = (): KeypairInfo => {
+    return resolveKeypairInfo();
 };
 
 export const getWalletCtx = () => {
@@ -51,4 +70,18 @@ export const getWalletCtx = () => {
     const connection = new Connection(DEFAULT_RPC_ENDPOINT, "confirmed");
 
     return { connection, signer };
+};
+
+export type KeypairInfo = {
+    path: string;
+    exists: boolean;
+    source: "env" | "local" | "default";
+};
+
+export const validateKeypairPath = (keypairPath: string): Keypair => {
+    if (!fs.existsSync(keypairPath)) {
+        throw new Error(`Keypair not found: ${keypairPath}`);
+    }
+
+    return loadKeypair(keypairPath);
 };
