@@ -16,6 +16,7 @@ const LOGO = `${BOLD}${CYAN}
   ╚═╝ ╚══▀▀═╝ ╚══════╝╚═╝  ╚═╝╚═════╝ ╚══════╝${RESET}
 `;
 
+
 const MENU_ITEMS = [
     {label: "SolChat", action: runChatCommand},
     {label: "IQChan", action: runIqchanMenu},
@@ -25,12 +26,17 @@ const MENU_ITEMS = [
 ];
 
 export const runMainMenu = async () => {
-    const {signer} = getWalletCtx();
+    const {connection, signer} = getWalletCtx();
     const pubkey = shortenSig(signer.publicKey.toBase58());
+    const balance = await connection.getBalance(signer.publicKey);
+    const menuTitle =
+    `${LOGO}` +
+    `${DIM}  Wallet:  ${GREEN}${pubkey}${RESET}\n` +
+    `${DIM}  Balance: ${GREEN}${(balance / 1e9).toFixed(4)} SOL${RESET}`;
 
     while (true) {
         const index = await selectFromList(
-            `${LOGO}${DIM}  Wallet: ${GREEN}${pubkey}${RESET}`,
+            menuTitle,
             MENU_ITEMS,
             (item, selected) => {
                 if (item.action === null) {

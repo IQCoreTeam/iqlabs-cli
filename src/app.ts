@@ -32,15 +32,28 @@ const ensureWallet = async () => {
 
     if (info.exists) {
         try {
-            validateKeypairPath(info.path);
-            return;
+            const signer = validateKeypairPath(info.path);
+
+            showLogo();
+            console.log(`  ${GREEN}Wallet detected.${RESET}`);
+            console.log(`  ${DIM}Path: ${info.path}${RESET}`);
+            console.log(`  ${DIM}Public key: ${GREEN}${signer.publicKey.toBase58()}${RESET}`);
+            console.log("");
+
+            const answer = (await prompt("  Use this wallet? (y/n): ")).trim().toLowerCase();
+
+            if (answer === "y" || answer === "yes") {
+                saveEnvVar("SOLANA_KEYPAIR_PATH", info.path);
+                process.env.SOLANA_KEYPAIR_PATH = info.path;
+                return;
+            }
         } catch {
             // Existing wallet path is present, but the file is not a valid keypair.
         }
     }
 
     showLogo();
-    console.log(`  ${YELLOW}Wallet not configured.${RESET}`);
+    console.log(`  ${YELLOW}Set Your Crypto Wallet.${RESET}`);
     console.log(`  ${DIM}Paste a Solana keypair JSON path below.${RESET}`);
     console.log(`  ${DIM}Leave empty to generate a new wallet.${RESET}`);
     console.log("");
@@ -119,6 +132,8 @@ const main = async () => {
     // 3. Check SOL balance
     const {connection, signer} = getWalletCtx();
     const balance = await connection.getBalance(signer.publicKey);
+
+
     if (balance === 0) {
         showLogo();
         console.log(`  ${YELLOW}Your wallet has 0 SOL.${RESET}`);
