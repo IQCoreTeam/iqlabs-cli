@@ -32,10 +32,8 @@ On first launch, go to **My Menu > RPC Settings** and paste your RPC endpoint UR
   2. `SOLANA_KEYPAIR_PATH` environment variable
   3. `~/.config/solana/id.json` (default Solana CLI keypair)
 
-If you don't have a keypair, generate one:
-```bash
-solana-keygen new --outfile keypair.json
-```
+If you don't have a keypair, the cli will generate a fresh wallet and add its path to the env for you:
+
 
 ## RPC Configuration
 
@@ -63,16 +61,32 @@ npm start
 
 ### Main Menu
 ```
-============================
-   Solana Internet CLI
-============================
+  Wallet:  4xKj...mR9p
+  Balance: 0.0123 SOL
 
-  1) My Menu
-  2) SolChat
-  3) IQChan
-
-  0) Exit
+  > SolChat
+    IQChan
+    File Sharing
+    My Menu
+    Exit
 ```
+
+Use the arrow keys to navigate, Enter to select, and Esc to go back.
+
+### My Menu
+```
+  Wallet: 4xKj...mR9p
+
+  > RPC Settings
+    Gateway Settings
+    Wallet Settings
+    My Profile
+    My Inventory
+    DM Inbox
+    Back
+```
+
+Use My Menu to update saved .env config values like `SOLANA_RPC_ENDPOINT`, `GATEWAY_URL`, and `SOLANA_KEYPAIR_PATH`.
 
 ### IQChan — Board View
 Navigate with arrow keys. Each thread shows the OP and last few replies in a tree layout:
