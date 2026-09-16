@@ -381,7 +381,7 @@ export class ChatService {
             let tx;
             try {
                 tx = await this.connection.getTransaction(sig.signature, {
-                    maxSupportedTransactionVersion: 0,
+                    maxSupportedTransactionVersion: 1,
                 });
             } catch {
                 continue;
